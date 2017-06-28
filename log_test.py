@@ -4,15 +4,15 @@ PWD = os.path.dirname(os.path.abspath(__file__))
 import argparse, socket
 import logging
 
-# def parse_args():
-    # parser = argparse.ArgumentParser(description="zkServer manager")
+def parse_args():
+    parser = argparse.ArgumentParser(description="zkServer manager")
 
-    # parser.add_argument("--daemon",  '-d', action='store_true',  help="run as daemon manager")
-    # parser.add_argument("--force", "-f",  action='store_true',  help="force start as daemon")
-    # parser.add_argument("--msg", '-m', type=str, default=None, help="zkMonitor message")
-    # parser.add_argument('--verbose', '-v', default=LOG_CHOICE[1], choices = LOG_CHOICE, help="log level")
+    parser.add_argument("--daemon",  '-d', action='store_true',  help="run as daemon manager")
+    parser.add_argument("--force", "-f",  action='store_true',  help="force start as daemon")
+    parser.add_argument("--msg", '-m', type=str, default=None, help="zkMonitor message")
+    parser.add_argument('--verbose', '-v', default=LOG_CHOICE[1], choices = LOG_CHOICE, help="log level")
 
-    # return parser.parse_args()
+    return parser.parse_args()
 
 LOG_LEVEL = (logging.NOTSET, logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR, logging.CRITICAL)
 LOG_CHOICE = map(lambda x: logging.getLevelName(x), LOG_LEVEL)
@@ -27,16 +27,19 @@ def set_loggint_format(level):
 
 
 if __name__ == '__main__':
-    # args = parse_args()
-    # print args
-    # print args.daemon
-    # print args.msg
-
-    set_loggint_format(1)
-    
-
-
-    logging.info("gfhgfhgh")
-
+    args = parse_args()
+    set_loggint_format(args.verbose)
+    try:
+        if args.daemon:
+            print "dfgdfgdfg"
+        elif args.msg != None:
+            print args.msg
+            logging.info(args.msg)
+        else:
+            logging.error("args errro!")
+            logging.info("-----")
+    except Exception, ex:
+        logging.error(str(ex))
+        quit()
 
 
