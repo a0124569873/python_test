@@ -1,7 +1,7 @@
 import socket
 import sys
 HOST = None
-PORT = 8888
+PORT = 6666
 s = None
 for res in socket.getaddrinfo(HOST,PORT,socket.AF_UNSPEC,socket.SOCK_STREAM,0,socket.AI_PASSIVE):
     af,socktype,proto,canonname,sa = res
