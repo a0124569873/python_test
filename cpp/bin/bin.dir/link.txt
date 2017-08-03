@@ -1,0 +1,1 @@
+/usr/bin/cc     CMakeFiles/../bin/bin.dir/src/a.o CMakeFiles/../bin/bin.dir/src/main.o  -o ../bin/bin -rdynamic -lm 

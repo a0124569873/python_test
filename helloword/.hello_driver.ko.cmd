@@ -1,0 +1,1 @@
+cmd_/root/Desktop/helloword/hello_driver.ko := ld -r -m elf_x86_64 -T ./scripts/module-common.lds --build-id  -o /root/Desktop/helloword/hello_driver.ko /root/Desktop/helloword/hello_driver.o /root/Desktop/helloword/hello_driver.mod.o

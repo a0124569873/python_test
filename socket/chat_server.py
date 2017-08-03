@@ -19,7 +19,7 @@ if __name__ == "__main__":
     # List to keep track of socket descriptors
     CONNECTION_LIST = []
     RECV_BUFFER = 4096 # Advisable to keep it as an exponent of 2
-    PORT = 5000
+    PORT = 8000
 
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     # this has no effect, why ?
@@ -35,6 +35,8 @@ if __name__ == "__main__":
     while 1:
         # Get the list sockets which are ready to be read through select
         read_sockets,write_sockets,error_sockets = select.select(CONNECTION_LIST,[],[])
+        print "dsfdsfdsf";
+        print len(CONNECTION_LIST)
 
         for sock in read_sockets:
             #New connection
@@ -54,6 +56,7 @@ if __name__ == "__main__":
                     # a "Connection reset by peer" exception will be thrown
                     data = sock.recv(RECV_BUFFER)
                     if data:
+                        print str(sock)+"  "+data
                         broadcast_data(sock, "r" + ' ' + data)                
 
                 except:

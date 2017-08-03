@@ -1,0 +1,22 @@
+#IncludeRegexLine: ^[ 	]*#[ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/root/Desktop/cpp/include/a.h
+math.h
+-
+
+/root/Desktop/cpp/src/a.c
+../include/a.h
+/root/Desktop/cpp/include/a.h
+
+/root/Desktop/cpp/src/main.c
+stdio.h
+-
+../include/a.h
+/root/Desktop/cpp/include/a.h
+
