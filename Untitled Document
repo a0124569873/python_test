@@ -1,0 +1,8 @@
+while true
+do
+dmesg -w >> /root/aa.txt
+sleep 1
+done
+
+
+

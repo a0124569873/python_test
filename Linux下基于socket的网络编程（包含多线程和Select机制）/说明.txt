@@ -1,0 +1,8 @@
+本程序包含有一个服务器端和3个客户端。
+在linux下编译即可运行，编译方法为：服务器端：gcc server.c -o server.o -lpthread
+				 TCP客户端 ：gcc tcp_client.c -o client.o
+				 单播客户端：gcc udp_single_client.c -o udp_single_client.o
+				 组播客户端：gcc udp_group_client.c -o udp_group_client.o
+
+
+注：TCP客户端和udp单播客户端目的IP设置的是我的本机IP，使用者需要按发送的目的IP手动修改。

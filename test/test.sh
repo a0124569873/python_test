@@ -1,0 +1,2 @@
+aa="dfgfdg"
+echo ${aa};

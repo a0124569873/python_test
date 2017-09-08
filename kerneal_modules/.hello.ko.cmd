@@ -1,0 +1,1 @@
+cmd_/root/Desktop/kerneal_modules/hello.ko := ld -r -m elf_x86_64 -T ./scripts/module-common.lds --build-id  -o /root/Desktop/kerneal_modules/hello.ko /root/Desktop/kerneal_modules/hello.o /root/Desktop/kerneal_modules/hello.mod.o
