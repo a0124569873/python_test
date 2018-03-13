@@ -64,14 +64,9 @@ unsigned short get_num(unsigned short num){
     return *dest;
 }
 
-
-void print_skb_info(struct sk_buff *skb, const struct net_device *in,
-			       const struct net_device *out) {
-
+void print_skb_info(struct sk_buff *skb, const struct net_device *in, const struct net_device *out) {
     struct frame_type *frame_ty = skb->data;
-
     if(frame_ty->frame == 8){
-
         struct protocol_type *protocol_ty = skb->data;
         if(protocol_ty->protocol == 6){
 
@@ -89,9 +84,6 @@ void print_skb_info(struct sk_buff *skb, const struct net_device *in,
                 printk("tcp:%d\n",tcp_num);
                 tcp_num++;
             }
-
-
-
         }else if(protocol_ty->protocol == 1){
             printk("icmp:%d\n",icmp_num);
             icmp_num++;
@@ -102,7 +94,6 @@ void print_skb_info(struct sk_buff *skb, const struct net_device *in,
     }
 
     //printk("aaaaaaaaaaaaaaaaaaa%d\n",count_num++);
-    
 
 }
 
