@@ -1,0 +1,15 @@
+# Copyright 2014 6WIND S.A.
+
+config VNB_NODE_L2TP
+	bool "Enable L2TP VNB node"
+	default y
+
+config VNB_L2TP_SEQ_CHECK
+	bool "Enable additional L2TP sequence checks"
+	depends on VNB_NODE_L2TP
+	default n
+
+config VNB_L2TP_SESS_HASH_ORDER
+	int "L2TP session hash table order"
+	depends on VNB_NODE_L2TP
+	default 5

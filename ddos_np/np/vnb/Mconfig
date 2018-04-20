@@ -1,0 +1,82 @@
+menu "VNB options"
+
+config VNB_NODE_RAW
+	bool "Enable RAW VNB node"
+	default n
+
+config VNB_NODE_VJC
+	bool "Enable VJC VNB node"
+	default n
+
+config VNB_ETHER_MAX_LOWER_IN
+	int "max ether lower input hooks"
+	default 64
+
+config VNB_NAME_HASH_ORDER
+	int "nodes name hash table order"
+	default 11
+
+config VNB_HOOK_NAME_HASH_ORDER
+	int "hooks name hash table order"
+	default 11
+
+config VNB_ID_HASH_ORDER
+	int "ID hash table order"
+	default 11
+
+config VNB_MUX_HASHTABLE_ORDER
+       int "mux hash table order"
+       default 10
+
+config VNB_NETLINK_NOTIFY
+       bool "netlink notification"
+       default y
+
+config VNB_EXCEPTION_HANDLER
+       bool "VNB exception handler"
+       default y
+
+config VNB_KSOCK_LARGE_BUFSZ
+	bool "use a large buffer size for kernel ksockets"
+	default n
+
+config VNB_KSOCK_BUFSZ
+	int "buffer size for the ksockets"
+	depends on VNB_KSOCK_LARGE_BUFSZ
+	default 1048576
+
+config VNB_NODE_NFFEC
+	bool "Enable NFFEC VNB node"
+	default y
+
+config VNB_NFFEC_MAX_LOWER_IN
+	int "max nffec lower input hooks"
+	depends on VNB_NODE_NFFEC
+	default 64
+
+config VNB_NFFEC_HASHTABLE_ORDER
+       int "nffec hash table order"
+       depends on VNB_NODE_NFFEC
+       default 4
+
+source Mconfig.extra
+
+source vlan/Mconfig
+
+source etherbridge/Mconfig
+
+source gre/Mconfig
+
+source lag/Mconfig
+
+source mpls/Mconfig
+
+source ppp/Mconfig
+
+source pppoe/Mconfig
+
+source l2tp/Mconfig
+
+source gtpu/Mconfig
+
+endmenu

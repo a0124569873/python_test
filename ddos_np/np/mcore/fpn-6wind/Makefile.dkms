@@ -1,0 +1,21 @@
+# Copyright 2013 6WIND S.A.
+
+# Main DKMS Makefile
+
+#Subdirs in build order
+SUBDIRS=fptun fptun/nf-fptun fps/fps-module
+
+DIST_FP=$(CURDIR)
+DKMS_BUILDROOT=$(CURDIR)
+FP_BUILDROOT=/usr/local/fp
+FPNSDK_DIR=/usr/local/fpn-sdk
+IFUID_DIR=/usr/local/modules/ifuid
+VRF_DIR=/usr/local/modules/vrf
+KERNEL_SRC?=/lib/modules/$(shell uname -r)/build
+PKG_DKMS=y
+.EXPORT_ALL_VARIABLES:
+
+%:
+	for i in $(SUBDIRS); do \
+	  [ ! -d $$i ] || $(MAKE) -C $(KERNEL_SRC) S=$(PWD)/$$i SUBDIRS=$(PWD)/$$i $@ || exit 1;\
+	done

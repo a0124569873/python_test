@@ -1,0 +1,5 @@
+# Copyright 2014 6WIND S.A.
+
+config VNB_NODE_VLAN
+	bool "Enable VLAN VNB node"
+	default y

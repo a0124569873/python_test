@@ -1,0 +1,63 @@
+#########################################################################
+# beginning of overwrite part -> depend on each application
+#########################################################################
+
+PROG = lacpd
+LIST = $(PROG)
+
+SRCS = main.c node.c netlink.c iface.c
+SRCS+= ieee8023_tlv.c ieee8023ad_lacp_sm_rx.c ieee8023ad_lacp_sm_tx.c
+SRCS+= ieee8023ad_lacp_debug.c subr_prf2.c ieee8023ad_lacp_sm_mux.c
+SRCS+= ieee8023ad_lacp_sm_ptx.c ieee8023ad_lacp_timer.c ieee8023ad_lacp_select.c
+
+VPATH = ${DIST_VNB}/tools/lacp ${DIST_VNB}/lag/netgraph
+
+#CFLAGS+= -DLACPD_STANDALONE
+CFLAGS+= -Wall -Werror
+
+# for libevent
+CFLAGS+= -I$(DIST_LIBEVENT)
+LDADD+= -L$(ROOTDIR)/ports/libevent -levent
+
+# for libnetgraph
+CFLAGS+= -I${DIST_LIBNETGRAPH} -I${DIST_VNB}/sys -I${DIST_VNB}/lag
+LDADD+= -L$(LIBNETGRAPH_DIR) -lnetgraph
+
+# for libnl3
+CFLAGS+= -I$(DIST_LIBNL3)
+LDADD+= $(LDADD_LIBNL)
+LDFLAGS += $(LDFLAGS_LIBNL)
+
+# for libconsole
+CFLAGS+= -I${DIST_LIBCONSOLE}
+LDADD+= -L$(ROOTDIR)/lib/libconsole/libconsole -lconsole
+
+# for librt
+LDADD+= -lrt
+
+# high availability
+ifeq ($(CONFIG_HA6W_SUPPORT), y)
+CFLAGS   += -DHA_SUPPORT -I$(DIST_HIGHAVAILABILITY)/lib6whas
+LDFLAGS  += -L$(ROOTDIR)/ports/lib6whas
+LDADD    += -l6whas
+LDFLAGS  += -L$(ROOTDIR)/lib/libxml2
+LDFLAGS  += -L$(ROOTDIR)/lib/libxt
+LDADD    += -lxt -lxml2 -lm
+endif
+
+# for libifuid (only needed for HA)
+ifeq ($(CONFIG_HA6W_SUPPORT), y)
+LDFLAGS  += -L$(ROOTDIR)/ports/ifuid/libifuid
+LDADD    += -lifuid
+CFLAGS   += -I$(DIST_IFUID)/libifuid
+endif
+
+
+ifneq (${INCKERN},)
+CFLAGS+= -D__linux__ ${INCKERN}
+endif
+
+#########################################################################
+# end of overwrite part -> depend on each application
+#########################################################################
+

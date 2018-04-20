@@ -1,0 +1,6 @@
+#verbose
+#foreground
+force
+peer_id $BLADEID
+
+interface ether*

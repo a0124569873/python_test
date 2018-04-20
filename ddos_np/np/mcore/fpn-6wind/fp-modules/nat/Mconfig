@@ -1,0 +1,19 @@
+# Copyright 2013 6WIND S.A.
+
+menu "Fast path NAT"
+
+config MCORE_NETFILTER_NAT
+	bool "NAT support"
+	depends on MCORE_NF_CT
+	default y
+	help
+	  Enable NAT support.
+
+config MCORE_FPM_NFCT
+	bool "Conntrack update from kernel support"
+	default y
+	depends on MCORE_NETFILTER_NAT
+	help
+	  Enable to conntrack update from kernel support.
+
+endmenu

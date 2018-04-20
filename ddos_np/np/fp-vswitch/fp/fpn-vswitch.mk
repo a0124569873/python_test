@@ -1,0 +1,3 @@
+# Copyright 2013 6WIND S.A.
+
+MCORE_COMMON_CFLAGS += -I$(DIST_FP_VSWITCH)/common

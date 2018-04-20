@@ -1,0 +1,2349 @@
+#!/usr/bin/env python
+
+from __future__ import division
+
+import argparse
+from distutils.spawn import find_executable  # pylint: disable=E0611,F0401
+import fnmatch
+import math
+import os
+import re
+import shlex
+import subprocess
+import sys
+
+
+# machine.py #
+class MachineDescription(object):
+    # TODO: add docstring
+
+    def __init__(self):
+        self.cpu_info = CpuInfo()
+        self.pci_network = {}
+        self.pci_network_count = 0
+        self.pci_crypto = {}
+        self.pci_crypto_count = 0
+        self.pci_not_supported = {}
+        self.pci_not_supported_count = 0
+        self.nb_txd = -1
+        self.nb_rxd = -1
+        self.addon_options = []
+        self.eal_options = []
+        self.fpnsdk_options = []
+        self.fp_options = []
+
+    def __str__(self):
+        machine_txt = str(self.cpu_info)
+
+        for sock_id, socket in self.cpu_info.sockets.iteritems():
+            machine_txt += '\n' + '-' * 100 + '\n\t\tsocket %d\n' % sock_id
+            machine_txt += str(socket)
+            machine_txt += '\n\nEthernet PCI information:\n'
+            for pci in self.pci_network.itervalues():
+                if pci.numa_node == sock_id:
+                    machine_txt += str(pci)
+
+            machine_txt += '\n\nAvailable crypto:\n'
+            for crypto in self.pci_crypto.itervalues():
+                if crypto.numa_node == sock_id:
+                    machine_txt += str(crypto)
+
+            machine_txt += '\n\nUnsupported PCI cards:\n'
+            for pci in self.pci_not_supported.itervalues():
+                if pci.numa_node == sock_id:
+                    machine_txt += str(pci)
+
+        return machine_txt.rstrip()
+
+    def _add_crypto_card(self, driver_name, bus, node, card):
+        # TODO: add docstring
+        reg_ref = self._get_link_crypto_card(card)
+        new_crypto = PCIGeneric(driver_name, bus=bus, numa_node=node,
+                                info=PCICrypto(card))
+        if reg_ref != -1:
+            new_crypto.info.linked_ref = reg_ref
+            ref_crypto = self.pci_crypto[reg_ref]
+            ref_crypto.info.link_key.append(self.pci_crypto_count)
+        self.pci_crypto[self.pci_crypto_count] = new_crypto
+        self.pci_crypto_count += 1
+
+    def _add_network_card(self, driver_name, bus, node, card):
+        # TODO: add docstring
+        eth_path = find('/sys/bus/pci/devices/%s' % bus, 'net')
+        new_network = PCIGeneric(driver_name, bus=bus, numa_node=node,
+                                 info=PCINetwork(card))
+
+        if eth_path:
+            _eth_name = os.listdir(eth_path)[0]
+            new_network.info.eth = _eth_name
+            max_rxq = 0
+            max_txq = 0
+            for f in os.listdir('%s/%s/queues' % (eth_path,
+                                                  new_network.info.eth)):
+                if f.startswith('rx-'):
+                    max_rxq += 1
+                if f.startswith('tx-'):
+                    max_txq += 1
+            new_network.info.max_rxq = max_rxq
+            new_network.info.max_txq = max_txq
+
+        # if card capabilities is fixed override read value
+        if card.capabilities:
+            new_network.info.max_rxq = card.capabilities.rxq
+            new_network.info.max_txq = card.capabilities.txq
+
+        self.pci_network[self.pci_network_count] = new_network
+        self.pci_network_count += 1
+
+    def _add_read_core_port(self, core, sel_port):
+        # TODO: add docstring
+        cur_port = 0
+        errors = ''
+
+        for pci_id, pci in self.pci_network.iteritems():
+            if pci.info.status:
+                if cur_port == sel_port:
+                    if not core in pci.info.used_cpu:
+                        socket = self.cpu_info.sockets[pci.numa_node]
+                        if not socket.add_core_info(core, pci_id):
+                            errors += 'ERROR: try to add a non valid core (%d) for the PCI card on bus %s\n' % (core, pci.bus)
+                        else:
+                            pci.info.used_cpu.append(core)
+                    return errors
+                else:
+                    cur_port += 1
+        return errors
+
+    def _get_link_crypto_card(self, card):
+        # TODO: add docstring
+        for crypto_id, crypto in self.pci_crypto.iteritems():
+            if crypto.info.card == card:
+                return crypto_id
+        return -1
+
+    def _get_numa_node(self, bus):
+        # TODO: add docstring
+        if self.cpu_info.thread_count == 1:
+            return 0
+
+        # do not read /sys/bus/pci/devices/%pcieth.bus/numa_node (not always valid)
+        with open('/sys/bus/pci/devices/%s/local_cpulist' % bus, 'r') as f:
+            local_cpulist = f.read()
+
+        cpulist = get_cpu_list(local_cpulist.rstrip(), [])
+        node_number = -1
+        if len(cpulist):
+            for socket_id, socket in self.cpu_info.sockets.iteritems():
+                if cpulist[0] in socket.hyperthreads:
+                    if set(cpulist).issubset(set(socket.hyperthreads)) == True:
+                        # local cpulist information is correct, use it
+                        node_number = socket_id
+                    else:
+                        # bios issue. Used bus info to retrieve socket
+                        pci_info = bus.rsplit(':')
+                        if self.cpu_info.socket_count == 2:
+                            node_number = (int(pci_info[1], 16) & 128) >> 7
+                        if self.cpu_info.socket_count == 4:
+                            node_number = (int(pci_info[1], 16) & 192) >> 6
+                        if self.cpu_info.socket_count == 8:
+                            node_number = (int(pci_info[1], 16) & 224) >> 5
+                    break
+
+        return node_number
+
+    def _set_allpci_state(self, state):
+        # TODO: add docstring
+        for pci in self.pci_network.itervalues():
+            pci.info.status = state
+
+    def _set_pci_off_by_name(self, eth_name):
+        # TODO: add docstring
+        for pci in self.pci_network.itervalues():
+            if pci.info.eth == eth_name:
+                pci.info.status = 0
+                return
+
+    def _set_pci_state_by_bus(self, state, bus):
+        # TODO: add docstring
+        for pci in self.pci_network.itervalues():
+            if pci.bus == bus:
+                pci.info.status = state
+                return
+
+    def numa_node(self, pci_nb):
+        return self.pci_network[pci_nb].numa_node
+
+    def available_cpu(self, pci_nb):
+        node = self.numa_node(pci_nb)
+        return self.cpu_info.sockets[node].hyperthreads
+
+    def get_network_name(self, pci_nb):
+        return self.pci_network[pci_nb].driver_name
+
+    def get_network_eth(self, pci_nb):
+        return self.pci_network[pci_nb].info.eth
+
+    def get_network_state(self, pci_nb):
+        return self.pci_network[pci_nb].info.status
+
+    def get_network_used_cpu(self, pci_nb):
+        return self.pci_network[pci_nb].info.used_cpu
+
+    def cpu_update(self, pci_nb, new_list):
+        socket_id = self.pci_network[pci_nb].numa_node
+        old_list = self.pci_network[pci_nb].info.used_cpu
+        to_add = list(set(new_list)-set(old_list))
+        to_remove = list(set(old_list)-set(new_list))
+        socket = self.cpu_info.sockets[socket_id]
+
+        for add_core_nb in to_add:
+            socket.add_core_info(add_core_nb, pci_nb)
+
+        for rm_core_nb in to_remove:
+            socket.remove_core_info(rm_core_nb, pci_nb)
+
+        self.pci_network[pci_nb].info.used_cpu = new_list
+        if new_list:
+            self.pci_network[pci_nb].info.status = 1
+        else:
+            self.pci_network[pci_nb].info.status = 0
+
+    CPUINFO_RE = re.compile(r'processor\s+:\s+(\d+).*?' +
+                            r'model name\s+:\s+(.*?)stepping.*?' +
+                            r'physical id\s+:\s+(\d+).*?' +
+                            r'core id\s+:\s+(\d+).*?' +
+                            r'flags\s+:\s+(.*?)bogomips', re.DOTALL)
+
+    def read_cpu_info(self):
+        cpuname = 'Unknown'
+        flags = ''
+
+        with open('/proc/cpuinfo', 'r') as f:
+            buf = f.read()
+
+        for match in MachineDescription.CPUINFO_RE.finditer(buf):
+            cpuname = match.group(2)
+            flags = match.group(5)
+
+            core_id = int(match.group(4))
+            hyperthread_id = int(match.group(1))
+
+            socket_id = _node_for_lcore(hyperthread_id)
+            if socket_id == -1:
+                print ('sys/devices/system/cpu/cpu%d has no reference to a socket.'
+                       % hyperthread_id)
+                socket_id = int(match.group(3))
+
+            if not socket_id in self.cpu_info.sockets:
+                self.cpu_info.sockets[socket_id] = Socket()
+                self.cpu_info.socket_count += 1
+                self.cpu_info.sockets[socket_id].free_hugepages = _free_hugepages(socket_id)
+            socket = self.cpu_info.sockets[socket_id]
+
+            if not core_id in socket.cores:
+                socket.cores[core_id] = Core()
+                socket.free_cores.append(core_id)
+                self.cpu_info.core_count += 1
+            core = socket.cores[core_id]
+
+            if not hyperthread_id in core.hyperthreads:
+                core.hyperthreads[hyperthread_id] = HThread()
+                socket.hyperthreads.append(hyperthread_id)
+
+            self.cpu_info.thread_count += 1
+
+        self.cpu_info.mem_channel = _memory_channels_count(cpuname)
+        self.cpu_info.name = cpuname.rstrip()
+
+        # Add crypto multibuffer fo Intel card with aes and (avx or avx2 or sse) flags present
+        if ((cpuname.rfind('Intel(R)') != -1) and (flags.rfind('aes') != -1) and
+                ((flags.rfind('avx') != -1) or (flags.rfind('sse') != -1))):
+            card = find_card_family('8086', 'ffff')
+            for i in range(0, self.cpu_info.socket_count):
+                self._add_crypto_card('Intel Multibuffer', '', i, card)
+
+    PCIINFO_RE = re.compile(r'''
+(?P<bus>[A-Fa-f0-9]{4}:[A-Fa-f0-9]{2}:[A-Fa-f0-9]{2}.[0-9]{1}) # bus address
+\s+
+(?P<class_id>0200|0b40|1000):      # device class 0200 for network, 0b40 or 1000 for crypto
+\s+
+(?P<vendor_id>[A-Fa-f0-9]{4})      # vendor id
+:
+(?P<product_id>[A-Fa-f0-9]{4})     # product id
+''', re.VERBOSE)
+
+    def read_pci_info(self):
+        buf = lspci('-nD')
+
+        for match in MachineDescription.PCIINFO_RE.finditer(buf):
+            vendor_id = match.group('vendor_id')
+            product_id = match.group('product_id')
+            class_id = match.group('class_id')
+            bus = match.group('bus')
+
+            driver_name = _read_driver_name(bus, class_id)
+            node = self._get_numa_node(bus)
+            try:
+                card = find_card_family(vendor_id, product_id)
+            except CardNotSupported:
+                card = None
+
+            if card:
+                if class_id == '0200':
+                    self._add_network_card(driver_name, bus, node, card)
+                else:
+                    self._add_crypto_card(driver_name, bus, node, card)
+            else:
+                class_name = 'Crypto'
+                if class_id == '0200':
+                    class_name = 'Network'
+                unk_pci = PCIGeneric(driver_name, bus=bus, numa_node=node,
+                                     info=PCINotSupported(class_name,
+                                                          vendor_id,
+                                                          product_id))
+                self.pci_not_supported[self.pci_not_supported_count] = unk_pci
+                self.pci_not_supported_count += 1
+
+    def show(self):
+        print 'Fast path configuration info'
+        print '============================\n'
+        has_eth_selected = False
+        for pci in self.pci_network.itervalues():
+            if pci.info.used_cpu:
+                if has_eth_selected == False:
+                    has_eth_selected = True
+                    print '  Selected ethernet card'
+                    print '  ----------------------\n'
+                name = pci.driver_name
+                eth = pci.info.eth
+                cpulist = cpu_list_to_string(pci.info.used_cpu)
+                if eth == 'none':
+                    mount_info = '(not mounted on any eth) '
+                else:
+                    mount_info = 'mounted on %s ' % eth
+                print '  %s PCI card %s with cores %s' % (name, mount_info,
+                                                          cpulist)
+        if has_eth_selected == False:
+            print 'WARNING: No ethernet card has been selected'
+
+        has_crypto_selected = False
+        for crypto in self.pci_crypto.itervalues():
+            if crypto.info.status:
+                if has_crypto_selected == False:
+                    has_crypto_selected = True
+                    print '\n  Used cryptographic hardware accelerator'
+                    print '  ---------------------------------------\n'
+                print '  %s' % crypto.info.card.name
+        print
+
+    def update_with_config(self, fp_param, fp_mem):
+        """
+        :arg FastPathConfig fp_param:
+            TODO:
+        :arg FastPathMemory fp_mem:
+            TODO:
+        """
+        errors = ''
+
+        if fp_param.whitelist and (fp_param.blacklist or fp_param.ignore_netdev):
+            #TODO: errors.append(ConfigError('cannot use whitelist and blacklist'))
+            return errors
+
+        if fp_param.blacklist or fp_param.ignore_netdev:
+            self._set_allpci_state(1)
+            for net in fp_param.ignore_netdev:
+                self._set_pci_off_by_name(net)
+            for b_pci in fp_param.blacklist:
+                self._set_pci_state_by_bus(0, b_pci)
+
+        if len(fp_param.whitelist):
+            for w_pci in fp_param.whitelist:
+                self._set_pci_state_by_bus(1, w_pci)
+
+        # Update crypto card info
+        for add_on in fp_param.addonlibrary:
+            for pci in self.pci_crypto.itervalues():
+                crypto = pci.get_crypto()
+                if ((add_on in crypto.card.required_addons) and
+                        crypto.can_be_selected()):
+                    crypto.toggle_info(fp_mem, [])
+
+        #Update cpu selection per port
+        core_mapping_list = fp_param.coremask.rsplit('/')
+        for core_mapping in core_mapping_list:
+            info = core_mapping.rsplit('=')
+            core = int(info[0][1:])
+            port_list = info[1].rsplit(':')
+            for port in port_list:
+                errors += self._add_read_core_port(core, int(port))
+
+        self.cpu_info.mem_channel = fp_param.memchannel
+
+        self.addon_options = fp_param.addonlibrary
+        self.eal_options = fp_param.additional_eal_options
+        self.fpnsdk_options = fp_param.additional_fpnsdk_options
+        self.fp_options = fp_param.additional_fp_options
+        self.nb_txd = fp_param.nbtxd
+        self.nb_rxd = fp_param.nbrxd
+
+        return errors
+
+    def clean_config(self):
+        # TODO: docstring
+        for pci in self.pci_network.itervalues():
+            if pci.info.status:
+                if not pci.info.used_cpu:
+                    pci.info.status = 0
+
+# --------------------------- subclasses ---------------------------------------
+
+class PCIGeneric(object):
+    """
+    Generic PCI Card
+    """
+    def __init__(self, driver_name, numa_node=None,
+                 bus=None, info=None):
+        self.driver_name = driver_name
+        self.bus = bus or ''
+        self.numa_node = numa_node or 0
+        self.info = info
+
+    def __str__(self):
+        return self.info.display(self.driver_name, self.bus)
+
+    def get_bus(self):
+        # XXX: avoid using methods to access fields
+        return self.bus
+
+    def get_crypto(self):
+        # XXX: avoid using methods to access fields
+        return self.info
+
+class PCICrypto(object):
+    # FIXME: inherit from PCIGeneric
+
+    def __init__(self, card):
+        self.card = card
+        self.status = 0
+        self.link_key = []
+        self.linked_ref = -1
+
+    def display(self, driver_name, bus):
+        # FIXME: use __str__ ?
+        if bus != '':
+            pci_txt = '\t%s (present on bus %s)\n' % (driver_name, bus)
+        else:
+            pci_txt = '\t%s\n' % driver_name
+
+        return pci_txt
+
+    def get_crypto_name(self):
+        # XXX: avoid using methods to access fields
+        return self.card.name
+
+    def can_be_selected(self):
+        if self.linked_ref == -1:
+            return True
+        return False
+
+    def is_selected(self):
+        return bool(self.status)
+
+    def toggle_info(self, fp_mem, addon_options):
+        name = self.card.capabilities.option_name
+        if self.status:
+            self.status = 0
+            fp_mem.remove_memory(name + '_pool')
+            fp_mem.remove_memory(name + '_session')
+            fp_mem.remove_memory(name + '_context')
+            pmd_list = self.card.required_addons
+            for pmd in pmd_list:
+                if pmd in addon_options:
+                    addon_options.remove(pmd)
+        else:
+            self.status = 1
+            fp_mem.add_memory(name + '_pool', False,
+                              fp_mem.crypto_buffers_nb,
+                              self.card.capabilities.pool_size,
+                              True)
+            fp_mem.add_memory(name + '_session', False,
+                              fp_mem.crypto_session_nb,
+                              self.card.capabilities.session_size,
+                              False)
+            fp_mem.add_memory(name + '_context', False,
+                              fp_mem.crypto_session_nb,
+                              self.card.capabilities.context_size,
+                              True)
+
+class PCINetwork(object):
+    # FIXME: inherit from PCIGeneric
+
+    def __init__(self, card=None):
+        self.card = card
+        self.status = 0
+        self.used_cpu = []
+        self.max_rxq = -1
+        self.max_txq = -1
+        self.eth = 'none'
+
+    def display(self, driver_name, bus):
+        # FIXME: use __str__ ?
+        pci_txt = ''
+        if self.eth == 'none':
+            pci_txt += '\t%s not mounted on any eth' % driver_name
+        else:
+            pci_txt += '\t%s mounted on %s' % (driver_name, self.eth)
+        pci_txt += ' (present on bus %s)' % bus
+        if self.max_rxq == -1:
+            pci_txt += ' with unknown max rxq/txq\n'
+        else:
+            pci_txt += '  with max rxq/txq : %d / %d\n' % (self.max_rxq,
+                                                           self.max_txq)
+        return pci_txt
+
+class PCINotSupported(object):
+    # FIXME: inherit from PCIGeneric
+
+    def __init__(self, class_name, vendor_id, product_id):
+        self.class_name = class_name
+        self.vendor_id = vendor_id
+        self.product_id = product_id
+
+    def display(self, driver_name, bus):
+        # FIXME: use __str__ ?
+        return '\tUnsupported %s PCI card: %s (present on bus %s)\n' % (self.class_name, driver_name, bus)
+
+class CpuInfo(object):
+    # TODO: add docstring
+
+    def __init__(self):
+        # TODO: add docstring
+        self.sockets = {}
+        self.name = ''
+        self.mem_channel = -1
+        self.socket_count = 0
+        self.core_count = 0
+        self.thread_count = 0
+
+    def __str__(self):
+        cpu_txt = 'General information\n'
+        cpu_txt += '\tProcessor name: %s\n' % self.name
+        cpu_txt += '\tSockets %d, Cores %d, Hyperthreads %d\n' % (self.socket_count,
+                                                                  self.core_count,
+                                                                  self.thread_count)
+        if self.mem_channel != -1:
+            cpu_txt += '\tMulti channel memory architecture: %d channels\n' % self.mem_channel
+        else:
+            cpu_txt += '\tMulti channel memory architecture is unknown\n'
+        return cpu_txt
+
+class Socket(object):
+    """
+    NUMA socket. Contains CPU cores and network devices.
+    """
+
+    def __init__(self, cores=None, free_hugepages=0, hyperthreads=None,
+                 free_cores=None, used_cores=None):
+        """
+        :arg dict cores:
+            The cores contained in this socket.
+        :arg int free_hugepages:
+            Number of free hugepages on this socket.
+        :arg list(int) hyperthreads:
+            The ids of the hyperthreads of this socket (the ids can be used to
+            get the HThread objects from Socket.cores).
+        :arg list(int) free_cores:
+            The ids of the "free" cores of this socket. I.E. cores not used by
+            the fast-path (the ids can be used to get the Core objects from
+            Socket.cores).
+        :arg list(int) used_cores:
+            The ids of the "used" cores of this socket. I.E. cores used by the
+            fast-path (the ids can be used to get the Core objects from
+            Socket.cores).
+        """
+        self.cores = cores or {}
+        self.free_hugepages = free_hugepages
+        self.hyperthreads = hyperthreads or []
+        self.free_cores = free_cores or []
+        self.used_cores = used_cores or []
+
+    def __str__(self):
+        count = 0
+        socket_txt = '\t\t--------\n'
+        socket_txt += 'Memory information\n'
+        socket_txt += '\tFree huge pages: %d\nCores list:\n' % self.free_hugepages
+        for core_id, core in self.cores.iteritems():
+            if count != 3:
+                socket_txt += '\tCore %3d = [%s]' % (core_id, str(core))
+                count += 1
+            else:
+                socket_txt += '\tCore %3d = [%s]\n' % (core_id, str(core))
+                count = 0
+        return socket_txt.rstrip()
+
+    def add_core_info(self, core_nb, port_nb):
+        # TODO: add docstring
+        for coreid, core in self.cores.iteritems():
+            if core_nb in core.hyperthreads:
+                core.hyperthreads[core_nb].state = 1
+                core.hyperthreads[core_nb].port.append(port_nb)
+                if not coreid in self.used_cores:
+                    self.used_cores.append(coreid)
+                    pos = self.free_cores.index(coreid)
+                    self.free_cores.pop(pos)
+                return True
+        return False
+
+    def remove_core_info(self, core_nb, port_nb):
+        # TODO: add docstring
+        for coreid, core in self.cores.iteritems():
+            if core_nb in core.hyperthreads:
+                pos = core.hyperthreads[core_nb].port.index(port_nb)
+                core.hyperthreads[core_nb].port.pop(pos)
+                if core.hyperthreads[core_nb].port:
+                    core.hyperthreads[core_nb].state = 0
+                    change = True
+                    for hthread in core.hyperthreads.itervalues():
+                        if len(hthread.port):
+                            change = False
+                    if change:
+                        self.free_cores.append(coreid)
+                        pos = self.used_cores.index(coreid)
+                        self.used_cores.pop(pos)
+                return
+
+class Core(object):
+    # TODO: add docstring
+
+    def __init__(self, hyperthreads=None):
+        """
+        :arg dict hyperthreads:
+            The hyperthreads contained in this core.
+        """
+        self.hyperthreads = hyperthreads or {}
+
+    def __str__(self):
+        core_txt = ''
+        for htread_id in self.hyperthreads.iterkeys():
+            core_txt += '-%3d' % htread_id
+        return core_txt[1:]
+
+class HThread(object):
+    # TODO: add docstring
+
+    def __init__(self, state=0, port=None):
+        """
+        :arg int state:
+            0 free, 1 used by FP and can listen to only one port, 2 used by FP
+            and can listen to several ports.
+        :arg list(int) ports:
+            List of ports listened by the hyperthread
+        """
+        self.state = state
+        self.port = port or []
+
+# --------------------------- private functions --------------------------------
+
+def _read_driver_name(bus, class_id):
+    """
+    :arg str bus:
+        The bus address on which the device is connected.
+    :arg str class_id:
+        The class identified of the device (i.e. '0200' for network devices).
+
+    :returns:
+        The name of the device from ``lspci``.
+    """
+    full_name = lspci('-D -s%s' % bus)
+    if class_id == '1000':
+        cardname = full_name.rsplit('device: ')
+    elif class_id == '0b40':
+        cardname = full_name.rsplit('processor: ')
+    else:
+        cardname = full_name.rsplit('controller: ')
+
+    if len(cardname) == 2:
+        return cardname[1].rstrip()
+    else:
+        return full_name.rstrip()
+
+_QUAD_ARCHI = [
+    'Intel(R) Xeon(R) CPU E5-*',
+    'Intel(R) Xeon(R) CPU E7-*',
+    'Intel(R) Core(TM) i7-5960X*',
+    'Intel(R) Core(TM) i7-5930K*',
+    'Intel(R) Core(TM) i7-5820K*',
+    'Intel(R) Core(TM) i7-4960X*',
+    'Intel(R) Core(TM) i7-4930K*',
+    'Intel(R) Core(TM) i7-4820K*',
+    'Intel(R) Core(TM) i7-3970X*',
+    'Intel(R) Core(TM) i7-3960X*',
+    'Intel(R) Core(TM) i7-3930K*',
+    'Intel(R) Core(TM) i7-3820*',
+]
+_TRIPLE_ARCHI = [
+    'Intel(R) Xeon(R) CPU E55?? Nehalem-EP*',
+    'Intel(R) Xeon(R) CPU E56?? Westmere-EP*',
+    'Intel(R) Xeon(R) CPU EC???? Jasper Forest*',
+    'Intel(R) Xeon(R) CPU L55?? Nehalem-EP*',
+    'Intel(R) Xeon(R) CPU L5609 Westmere-EP*',
+    'Intel(R) Xeon(R) CPU L5630 Westmere-EP*',
+    'Intel(R) Xeon(R) CPU L5640 Westmere-EP*',
+    'Intel(R) Xeon(R) CPU LC55x8 Jasper Forest*',
+    'Intel(R) Xeon(R) CPU W???? Bloomfield, Nehalem-EP, Westmere-EP*',
+    'Intel(R) Xeon(R) CPU X55?? Nehalem-EP*',
+    'Intel(R) Xeon(R) CPU X56?? Westmere-EP*',
+    'Intel(R) Core(TM) i7-9?? Bloomfield, Gulftown*',
+    'Intel(R) Core(TM) i7-9?0? Gulftown*',
+]
+def _memory_channels_count(cpu_name):
+    """
+    :returns:
+        The number of memory channels on a given CPU or -1 if CPU is unknown.
+    """
+    for arch in _QUAD_ARCHI:
+        if fnmatch.fnmatch(cpu_name, arch):
+            return 4
+
+    for arch in _TRIPLE_ARCHI:
+        if fnmatch.fnmatch(cpu_name, arch):
+            return 3
+
+    return -1
+
+_HUGEPAGES = '/sys/devices/system/node/node%d/hugepages'
+_FREE_HUGEPAGES = os.path.join(_HUGEPAGES, '%s/free_hugepages')
+def _free_hugepages(socket_id):
+    """
+    Get size of free hugepages of a node
+    """
+    free_size = 0
+    for f in os.listdir(_HUGEPAGES % socket_id):
+        if not f.startswith('hugepages-'):
+            continue
+        huge_size = f[len('hugepages-'):]
+        with open(_FREE_HUGEPAGES % (socket_id, f)) as p:
+            huge_free = p.read()
+        if huge_size == '2048kB':
+            free_size += 2 * int(huge_free.rstrip())
+        if huge_size == '1GB':
+            free_size += 1024 * int(huge_free.rstrip())
+
+    return free_size
+
+def _node_for_lcore(lcore_id):
+    """
+    Get node of a cpu
+    """
+    node_number = -1
+    for f in os.listdir('/sys/devices/system/cpu/cpu%d' % lcore_id):
+        if not f.startswith('node'):
+            continue
+        node_number = int(f[len('node'):])
+        break
+
+    return node_number
+
+# --------------- public function to create a MachineDesc object ---------------
+
+def scan_machine():
+    # TODO: add docstring
+    machine = MachineDescription()
+
+    machine.read_cpu_info()
+    machine.read_pci_info()
+
+    return machine
+
+
+# params.py #
+# --------------------------- globals and define -------------------------------
+# Any PMD allocate memory in Hugepage for RX and TX operation
+# Memory needs is PMD dependent. Set value to the biggest need (ixgbe)
+PMD_DMA_RING_ZONE = 65536
+
+# TODO: MBUF_SIZE is architecture dependent.
+# Used default value matching any architecture
+MBUF_SIZE = 2624
+
+# DPDK define
+DPDK_MEMPOOL_HEADER = 1600000
+DPDK_MEMPOOL_LOG = 512 * 2048 # 2048 elements of 512 size
+
+# --------------------------- main class ---------------------------------------
+
+class FastPathConfig(object):
+    """
+    Representation of the fast-path.env configuration file.
+    """
+
+    def __init__(self, addonlibrary, eal_options, fpnsdk_options, fp_options, nbtxd, nbrxd):
+        # TODO: add docstring to explain all parameters
+        self.fpmask = 0
+        self.coremask = ''
+        self.whitelist = []
+        self.blacklist = []
+        self.addonlibrary = addonlibrary
+        self.hugepage = []
+        self.ignore_netdev = []
+        self.rxqshared = 0
+        self.txqshared = 0
+        self.memory = -1
+        self.min_memory = 0
+        self.mbuf = 16384
+        self.min_mbuf = 0
+        self.nbtxd = nbtxd
+        self.nbrxd = nbrxd
+        self.memchannel = -1
+        self.cryptooption = {}
+        self.cryptooption_count = 0
+        self.specific_cryptooption = []
+        self.additional_eal_options = eal_options
+        self.additional_fpnsdk_options = fpnsdk_options
+        self.additional_fp_options = fp_options
+        self.hugepage_dir = ''
+
+    def __str__(self):
+        """
+        Convert structure representation to the fast-path.env format
+        """
+
+        fpparm_txt = 'FP_MASK=0x%08x\n' % self.fpmask
+        fpparm_txt += 'CORE_PORT_MAPPING="%s"\n' % self.coremask
+        fpparm_txt += 'EAL_OPTIONS="'
+        for eal in self.additional_eal_options:
+            fpparm_txt += '%s ' % eal
+        for wpci in self.whitelist:
+            fpparm_txt += '-w %s ' % wpci
+        for addon in self.addonlibrary:
+            fpparm_txt += '-d %s ' % addon
+        fpparm_txt += '"\n'
+        fpparm_txt += 'FPNSDK_OPTIONS="--nb-mbuf=%d' % self.mbuf
+        if self.rxqshared != 0:
+            fpparm_txt += ' --rxq-shared=0x%08x' % self.rxqshared
+        if self.txqshared != 0:
+            fpparm_txt += ' --txq-shared=0x%08x' % self.txqshared
+        if self.nbtxd != -1:
+            fpparm_txt += ' --nb-txd=%d' % self.nbtxd
+        if self.nbrxd != -1:
+            fpparm_txt += ' --nb-rxd=%d' % self.nbrxd
+        if len(self.additional_fpnsdk_options):
+            for fpnsdk in self.additional_fpnsdk_options:
+                fpparm_txt += ' %s' % fpnsdk
+        for crypto_opt in self.cryptooption.itervalues():
+            fpparm_txt += str(crypto_opt)
+        fpparm_txt += '"\n'
+
+        if len(self.additional_fp_options):
+            fpparm_txt += 'FP_OPTIONS="'
+            for fp in self.additional_fp_options:
+                fpparm_txt += '%s ' % fp
+            fpparm_txt += '"\n'
+        fpparm_txt += 'NB_MEM_CHANNELS=%d\n' % self.memchannel
+        fpparm_txt += 'FP_MEMORY=%d\n' % self.memory
+        if self.hugepage_dir:
+            fpparm_txt += 'HUGEPAGES_DIR=%s\n' % self.hugepage_dir
+        fpparm_txt += 'NB_HUGEPAGES=%d' % self.hugepage[0]
+        for i in range(1, len(self.hugepage)):
+            fpparm_txt += ',%d' % self.hugepage[i]
+        return fpparm_txt
+
+    def _compute_hugepage(self, fp_mac, memory_need, nb_mbuf, fp_cpu_nb):
+        # XXX: plural ?
+        """
+        Compute hugepage
+
+        :arg MachineDescription fp_mac:
+            information about the machine and selected information
+        :arg int memory_need:
+            estimation of memory need
+        :arg int nb_mbuf:
+            number of allocated mbuf
+        :arg int fp_cpu_nb:
+            Number of cpu used by fast path
+        :returns:
+            Additional memory to add to the estimate memory need
+        """
+        additional_memory = 0
+        for socket in fp_mac.cpu_info.sockets.itervalues():
+            available_hugepage = socket.free_hugepages
+            used_cpu_per_numa = 0
+            for core in socket.cores.itervalues():
+                for htread in core.hyperthreads.itervalues():
+                    if htread.state != 0:
+                        used_cpu_per_numa += 1
+            if fp_cpu_nb != 0:
+                used_memory = math.ceil(memory_need * used_cpu_per_numa / fp_cpu_nb)
+                mbuf_need = math.ceil(nb_mbuf * 2624 * used_cpu_per_numa / (fp_cpu_nb * 1048576))
+                # Hugepage are not necessary contiguous. To avoid issue with mbuf
+                # allocation per socket the needed size for mbuf must be less
+                # than 50% of reserved hugepages
+                # If it is not the case add some hugepages
+                if (2 * mbuf_need) > used_memory:
+                    additional_memory += 2 * mbuf_need - used_memory
+                    used_memory = 2 * mbuf_need
+                needed_hugepage = math.ceil(used_memory / 2)
+            else:
+                needed_hugepage = 0
+            if available_hugepage >= needed_hugepage:
+                self.hugepage.append(0)
+            else:
+                self.hugepage.append(needed_hugepage)
+        return additional_memory
+
+    # XXX: bad method name? find more appropriate.
+    def compute_from_pcilist(self, m, port_offset):
+        """
+        Compute first set of parameters:
+           - fp_mask,
+           - core_port_mapping,
+           - dpdk add on library,
+           - pci white list
+           - memory channels
+
+        :arg MachineDescription m:
+            information about the machine and selected information
+        :arg int port_offset:
+            Value of port to set to the first physical network (the first
+            are the virtual ones)
+        :returns:
+            Number of cpu used by fastpath (needed to compute other parameters)
+        """
+        # XXX: maybe try to simplify, add "air" in code
+
+        cpu_list = []
+        pmd_list = []
+        wpci_list = []
+        core_mapping = ''
+        fp_mask = 0
+
+        port_count = port_offset
+
+        # TODO: maybe use an intermediate representation of the core/port-mapping
+        # before casting to str, see ntf.util.pretty.dpdk_ports_map
+        # This should simplify the following code.
+        for i in range(0, m.pci_network_count):
+
+            new_pmd_list = m.pci_network[i].info.card.required_addons
+
+            for j in range(0, len(new_pmd_list)):
+                if new_pmd_list[j] not in pmd_list:
+                    pmd_list.append(new_pmd_list[j])
+
+            if m.pci_network[i].info.status:
+                wpci_list.append(m.pci_network[i].bus)
+
+                for j in range(0, len(m.pci_network[i].info.used_cpu)):
+                    new_coremap = 'c%d=' % m.pci_network[i].info.used_cpu[j]
+
+                    # XXX: avoid using .find() .rfind(), use "in" or "not in" operators
+                    if core_mapping.find(new_coremap) != -1:
+                        core_mapping = core_mapping.replace(new_coremap,
+                                                            '%s%d:' % (new_coremap,
+                                                                       port_count))
+                    else:
+                        core_mapping += '/%s%d' % (new_coremap, port_count)
+
+                    if m.pci_network[i].info.used_cpu[j] not in cpu_list:
+                        cpu_list.append(m.pci_network[i].info.used_cpu[j])
+                        fp_mask |= 2 ** m.pci_network[i].info.used_cpu[j]
+
+                port_count += 1
+
+        core_mapping.lstrip()
+        for pmd in pmd_list:
+            if not pmd in self.addonlibrary:
+                self.addonlibrary.append(pmd)
+
+        for crypto in m.pci_crypto.itervalues():
+            if crypto.info.status == 1:
+                cryptopmd = crypto.info.card.required_addons
+                for newpmd in cryptopmd:
+                    if not newpmd in self.addonlibrary:
+                        self.addonlibrary.append(newpmd)
+
+        for j in range(0, len(wpci_list)):
+            self.whitelist.append(wpci_list[j])
+
+        if m.cpu_info.mem_channel != -1:
+            self.memchannel = m.cpu_info.mem_channel
+        else:
+            self.memchannel = 3
+        self.fpmask = fp_mask
+        self.coremask = core_mapping[1:]
+
+        return len(cpu_list)
+
+    def compute_memory_info(self, m, fp_conf, fp_cpu_nb):
+        """
+        Compute second set of parameters:
+           - fp_memory and hugepage,
+           - rxq-shared and txq-shared,
+           - mbuf
+
+        :arg MachineDescription m:
+            information about the machine and selected information
+        :arg FastPathCompilationOption fp_conf:
+            information about compilation option mandatory to compute memory needs
+        :arg int fp_cpu_nb:
+            Number of cpu used by fast path
+        """
+        nb_mbuf = 0
+        port_count = 0
+        txq_mask = 0
+        rxq_mask = 0
+        memory_need = 0
+
+        if m.nb_txd != -1:
+            nb_txd = m.nb_txd
+        else:
+            nb_txd = 512
+
+        if m.nb_rxd != -1:
+            nb_rxd = m.nb_rxd
+        else:
+            nb_rxd = 128
+
+        # for emulex card the RX ring is always 1024
+        if 'librte_pmd_oce.so' in self.addonlibrary:
+            nb_rxd = 1024
+
+        # TODO: parse virtual interface
+        for i in range(0, m.pci_network_count):
+            if m.pci_network[i].info.status:
+                if ((m.pci_network[i].info.max_txq != -1) and
+                        (m.pci_network[i].info.max_txq <
+                         fp_cpu_nb)):
+                    txq_mask |= 2 ** port_count
+                    nb_mbuf += nb_txd
+                    memory_need += PMD_DMA_RING_ZONE
+                else:
+                    nb_mbuf += nb_txd
+                    memory_need += PMD_DMA_RING_ZONE * fp_cpu_nb
+                if ((m.pci_network[i].info.max_rxq != -1) and
+                        (m.pci_network[i].info.max_rxq <
+                         len(m.pci_network[i].info.used_cpu))):
+                    rxq_mask |= 2 ** port_count
+                    nb_mbuf += nb_rxd
+                    memory_need += PMD_DMA_RING_ZONE
+                else:
+                    nb_mbuf += len(m.pci_network[i].info.used_cpu) * nb_rxd
+                    memory_need += len(m.pci_network[i].info.used_cpu) * PMD_DMA_RING_ZONE
+                port_count += 1
+
+        # Compute needed mbuf
+        nb_mbuf += fp_cpu_nb * (m.cpu_info.thread_count - fp_cpu_nb) * fp_conf.ring_size
+
+        #print "nb_mbuf before round up: %d" %nb_mbuf
+        self.min_mbuf = nb_mbuf
+        nb_mbuf = math.ceil(nb_mbuf / 32768) * 32768
+        #nb_mbuf = round_up(nb_mbuf, 32768)
+
+        # RTE mempool for mbuf and log
+        memory_need += (nb_mbuf * MBUF_SIZE) + DPDK_MEMPOOL_LOG
+        memory_need += round_square2(nb_mbuf + 1) * 8
+
+        # Add mempool header for mbuf and log
+        memory_need += DPDK_MEMPOOL_HEADER * (m.cpu_info.socket_count + 1)
+
+        used_socket = 0
+        # Add heap need for socket used by dpdk
+        for socket in m.cpu_info.sockets.itervalues():
+            if socket.used_cores:
+                used_socket += 1
+
+        # crypto need
+        memory_need += fp_conf.memory_need(used_socket)
+
+        # Set memory need in Mb
+        memory_need = math.ceil(memory_need / 1048576)
+
+        # Add heap need for vnb and socket used by dpdk
+        memory_need += get_minimal_heap_size(HEAP_SIZE_IN_MB) * (used_socket + 1)
+
+        self.min_memory = memory_need
+
+        # Last allocation is a 11Mb heap for VNB.
+        # With multisocket architecture add 11Mb we must ensure that a 11Mb free
+        # zone is present on one socket, so add an additional 11Mb needs
+        if m.cpu_info.socket_count > 1:
+            memory_need += get_minimal_heap_size(HEAP_SIZE_IN_MB)
+
+        # Add 5% marging for memory fragmentation
+        memory_need = memory_need + math.ceil(memory_need / 20)
+
+        # compute NR_HUGEPAGE
+        additional_memory = self._compute_hugepage(m, memory_need,
+                                                   nb_mbuf, fp_cpu_nb)
+
+        self.rxqshared = rxq_mask
+        self.txqshared = txq_mask
+        self.memory = memory_need + additional_memory
+        self.mbuf = nb_mbuf
+
+    def compute_crypto_info(self, crypto, fp_mac):
+        """
+        Compute crypto options (-T) for the given crypto structure
+
+        :arg MachineDescription fp_mac:
+            information about the machine and selected information
+        :arg PCIGeneric crypto:
+            information about the crypto PCI card
+        """
+        name = crypto.info.card.capabilities.option_name
+        mode = crypto.info.card.capabilities.option_mode
+        if mode == 0:
+            return
+        crypto_opt = CryptoMask(name)
+        self.cryptooption[self.cryptooption_count] = crypto_opt
+        self.cryptooption_count += 1
+        for socket_id, socket in fp_mac.cpu_info.sockets.iteritems():
+            crypto_dev_list = []
+            if crypto.numa_node == socket_id:
+                crypto_dev_list.append(0)
+                self.whitelist.append(crypto.bus)
+            count = 1
+            for i in crypto.info.link_key:
+                if fp_mac.pci_crypto[i].numa_node == socket_id:
+                    crypto_dev_list.append(count)
+                    self.whitelist.append(fp_mac.pci_crypto[i].bus)
+                count += 1
+            dev_count = len(crypto_dev_list)
+            count = 0
+            sub_count = 0
+            for core_id in socket.used_cores:
+                for htread_id, htread in socket.cores[core_id].hyperthreads.iteritems():
+                    if htread.state:
+                        if mode == 1:
+                            crypto_opt.cryptomask += '/c%d=%d' % (htread_id,
+                                                                  crypto_dev_list[count])
+                            count += 1
+                        else:
+                            if sub_count == 0:
+                                crypto_opt.cryptomask += '/c%d=%d.0.0' % (htread_id,
+                                                                          crypto_dev_list[count])
+                            elif sub_count == 1:
+                                crypto_opt.cryptomask += '/c%d=%d.0.1' % (htread_id,
+                                                                          crypto_dev_list[count])
+                            elif sub_count == 2:
+                                crypto_opt.cryptomask += '/c%d=%d.1.0' % (htread_id,
+                                                                          crypto_dev_list[count])
+                            elif sub_count == 3:
+                                crypto_opt.cryptomask += '/c%d=%d.1.1' % (htread_id,
+                                                                          crypto_dev_list[count])
+                            sub_count += 1
+                            if sub_count == 4:
+                                count += 1
+                                sub_count = 0
+                        if count == dev_count:
+                            count = 0
+
+    def read_eal_options(self, fp_file):
+        parser = argparse.ArgumentParser()
+        parser.add_argument('-w', '--pci-whitelist', action='append', default=[])
+        parser.add_argument('-b', '--pci-blacklist', action='append', default=[])
+        parser.add_argument('-d', dest='addons', action='append', default=[])
+
+        eal_options = read_param_value_in_file(fp_file, 'EAL_OPTIONS')
+
+        args, unknown_args = parser.parse_known_args(shlex.split(eal_options))
+
+        self.whitelist += args.pci_whitelist
+        self.blacklist += args.pci_blacklist
+        self.addonlibrary += args.addons
+
+        self.additional_eal_options += unknown_args
+
+    def read_fpnsdk_options(self, fp_file):
+        # TODO: use argparse
+        fpnsdk_options = read_param_value_in_file(fp_file, 'FPNSDK_OPTIONS', ' ')
+        next_op = 0
+        for fpnsdk in fpnsdk_options:
+            if next_op:
+                if next_op == 1:
+                    self.specific_cryptooption.append(fpnsdk)
+                next_op = 0
+            else:
+                if fpnsdk.startswith('-T'):
+                    next_op = 1
+                elif fpnsdk.startswith('--nb-mbuf='):
+                    self.mbuf = int(fpnsdk[10:])
+                elif fpnsdk.startswith('--nb-rxd='):
+                    self.nbrxd = int(fpnsdk[9:])
+                elif fpnsdk.startswith('--nb-txd='):
+                    self.nbtxd = int(fpnsdk[9:])
+                elif fpnsdk.startswith('--rxq-shared=0x'):
+                    self.rxqshared = int(fpnsdk[15:], 16)
+                elif fpnsdk.startswith('--txq-shared=0x'):
+                    self.txqshared = int(fpnsdk[15:], 16)
+                else:
+                    self.additional_fpnsdk_options.append(fpnsdk)
+
+# --------------------------- subclasses ---------------------------------------
+
+class CryptoMask(object):
+    """
+    This subclass manages crypto options (-T) of the fast-path.env file
+    """
+    def __init__(self, name):
+        self.name = name
+        self.cryptomask = ''
+
+    def __str__(self):
+        """
+        Convert crypto structure representation to the -T format
+        """
+        cryptomask_txt = ' -T %s:%s' %(self.name, self.cryptomask[1:])
+        return cryptomask_txt
+
+# --------------- public functions to create a FastPathConfig object --------
+
+def generate_parameter(m_desc, fp_conf):
+    """
+    Generate the structure representation of a fast-path.env file with
+    information provided by end-user
+    """
+    # XXX: find a more explicit name for function?
+    fpparam = FastPathConfig(m_desc.addon_options, m_desc.eal_options,
+                             m_desc.fpnsdk_options, m_desc.fp_options,
+                             m_desc.nb_txd, m_desc.nb_rxd)
+    # TODO: parse virtual interface (the nth first port)
+    cpu_count = fpparam.compute_from_pcilist(m_desc, 0)
+    fpparam.compute_memory_info(m_desc, fp_conf, cpu_count)
+    for crypto in m_desc.pci_crypto.itervalues():
+        if crypto.info.status == 1:
+            fpparam.compute_crypto_info(crypto, m_desc)
+
+    return fpparam
+
+def read_config(fp_file):
+    """
+    Convert a fast-path.env file to a structure representation
+    """
+
+    # FIXME: use default values in constructor of FastPathConfig
+    fpparam = FastPathConfig([], [], [], [], -1, -1)
+    fp_mask = read_param_value_in_file(fp_file, 'FP_MASK')
+    if fp_mask:
+        fpparam.fpmask = int(fp_mask, 16)
+
+    # TODO: parse the CORE_PORT_MAPPING into an internal representation easier
+    # to manipulate.
+    core_mapping = read_param_value_in_file(fp_file, 'CORE_PORT_MAPPING')
+    fpparam.coremask = core_mapping
+
+    fp_memory = read_param_value_in_file(fp_file, 'FP_MEMORY')
+    if fp_memory:
+        fpparam.memory = int(fp_memory)
+
+    mem_channels = read_param_value_in_file(fp_file, 'NB_MEM_CHANNELS')
+    if mem_channels:
+        fpparam.memchannel = int(mem_channels)
+
+    nb_hugepages = read_param_value_in_file(fp_file, 'NB_HUGEPAGES', ',')
+    for huge in nb_hugepages:
+        fpparam.hugepage.append(int(huge))
+
+    hugepages_dir = read_param_value_in_file(fp_file, 'HUGEPAGES_DIR')
+    if hugepages_dir:
+        fpparam.hugepage_dir = hugepages_dir
+
+    ignore_netdev = read_param_value_in_file(fp_file, 'IGNORE_NETDEV', ' ')
+    for net in ignore_netdev:
+        fpparam.ignore_netdev.append(net)
+
+    fpparam.read_eal_options(fp_file)
+
+    fpparam.read_fpnsdk_options(fp_file)
+
+    fpparam.additional_fp_options = read_param_value_in_file(fp_file, 'FP_OPTIONS', ' ')
+
+    return fpparam
+
+# --------------- other public functions  --------------------------------------
+
+def check_config(current_conf, needed_conf, previous_errors):  # pylint: disable=R0912
+    """
+    Compare an existing configuration with a minimal configuration.
+    Displays error and warning
+    """
+    has_errors_or_warnings = False
+    if previous_errors:
+        print previous_errors
+        has_errors_or_warnings = True
+
+    if current_conf.whitelist and (current_conf.blacklist or current_conf.ignore_netdev):
+        print 'ERROR: Invalid configuration: used whitelist and blacklist together'
+        has_errors_or_warnings = True
+
+    if current_conf.fpmask != needed_conf.fpmask:
+        common_fpmask = mask_comp(current_conf.fpmask, needed_conf.fpmask)
+        if common_fpmask[0] != 0:
+            print 'Warning: The following cores %r are used by fastpath but do not listen any ports' % mask_to_list(common_fpmask[0])
+        if common_fpmask[1] != 0:
+            print 'ERROR: The following cores %r are not used by fastpath but listen some ports' % mask_to_list(common_fpmask[1])
+        print '       Recommended value for FP_MASK is 0x%08x' % needed_conf.fpmask
+        has_errors_or_warnings = True
+
+    if current_conf.mbuf < needed_conf.min_mbuf:
+        print 'ERROR: Not enough mbuf. Recommended value is %d' % needed_conf.mbuf
+        has_errors_or_warnings = True
+
+    if current_conf.rxqshared != needed_conf.rxqshared:
+        common_rxqshared = mask_comp(current_conf.rxqshared, needed_conf.rxqshared)
+        if common_rxqshared[0] != 0:
+            print 'Warning: The following ports %r are RX shared whereas it is not needed' % mask_to_list(common_rxqshared[0])
+        if common_rxqshared[1] != 0:
+            print 'ERROR: The following ports %r must be RX shared' % mask_to_list(common_rxqshared[1])
+        print '       Recommended value for --rxq-shared is 0x%08x' % needed_conf.rxqshared
+        has_errors_or_warnings = True
+
+    if current_conf.txqshared != needed_conf.txqshared:
+        common_txqshared = mask_comp(current_conf.txqshared, needed_conf.txqshared)
+        if common_txqshared[0] != 0:
+            print 'Warning: The following ports %r are TX shared whereas it is not needed' % mask_to_list(common_txqshared[0])
+        if common_txqshared[1] != 0:
+            print 'ERROR: The following ports %r must be TX shared' % mask_to_list(common_txqshared[1])
+        print '       Recommended value for --txq-shared is 0x%08x' % needed_conf.txqshared
+        has_errors_or_warnings = True
+
+    for addon in needed_conf.addonlibrary:
+        if not addon in current_conf.addonlibrary:
+            print 'ERROR: The following EAL add-on %r must be added' % addon
+            has_errors_or_warnings = True
+
+    if (current_conf.memory != -1) and (current_conf.memory < needed_conf.memory):
+        if current_conf.memory >= needed_conf.min_memory:
+            print 'Warning: Provided FP_MEMORY can be not sufficient due to huge page fragmentation'
+        else:
+            print 'ERROR: Provided FP_MEMORY is not sufficient'
+        print '       Recommended value for FP_MEMORY is %d (minimal value is %d)' % (needed_conf.memory, needed_conf.min_memory)
+        has_errors_or_warnings = True
+
+    for i in range(0, len(needed_conf.hugepage)):
+        if needed_conf.hugepage[i] != 0:
+            if len(current_conf.hugepage) < i:
+                print 'ERROR: Provided NB_HUGEPAGES is not sufficient'
+                print '       Recommended value for NB_HUGEPAGES is ' + str(needed_conf.hugepage)
+                has_errors_or_warnings = True
+                break
+            else:
+                if current_conf.hugepage[i] < needed_conf.hugepage[i]:
+                    print 'ERROR: Provided NB_HUGEPAGES is not sufficient'
+                    print '       Recommended value for NB_HUGEPAGES is ' + str(needed_conf.hugepage)
+                    has_errors_or_warnings = True
+                    break
+
+    if not has_errors_or_warnings:
+        print 'No errors or warnings'
+
+
+# memory.py #
+# --------------------------- globals and define -------------------------------
+#TODO: modify makefile to set elt_size, size, max_core, cacheline_size,
+#      max_port in a config file
+
+_FPN_MEMORY_POOL = {
+    'generic_crypto_session': {
+        'key': 'CONFIG_MCORE_FPN_CRYPTO_GENERIC',
+        'size': 'session_nb',
+        'elt_size': 2752
+    },
+    'generic_crypto_buffer': {
+        'key': 'CONFIG_MCORE_FPN_CRYPTO_GENERIC',
+        'size': 'buffers_nb',
+        'elt_size': 704
+    }
+}
+
+_FP_MEMORY_POOL = {
+    'socket': {
+        'key': 'CONFIG_MCORE_SOCKET',
+        'size': 'CONFIG_MCORE_SOCKET_POOL_SIZE',
+        'rule': 1,
+        'elt_size': 592
+    },
+    'inpcbpl': {
+        'key': 'CONFIG_MCORE_SOCKET',
+        'size': 'CONFIG_MCORE_INPCB_POOL_SIZE',
+        'rule': 1,
+        'elt_size': 216
+    },
+    'in6pcbpl': {
+        'key': 'CONFIG_MCORE_SOCKET_INET6',
+        'size': 'CONFIG_MCORE_IN6PCB_POOL_SIZE',
+        'rule': 1,
+        'elt_size': 256
+    },
+    'tcpcbpl': {
+        'key': 'CONFIG_MCORE_SOCKET',
+        'size': 'CONFIG_MCORE_TCPCB_POOL_SIZE',
+        'rule': 1,
+        'elt_size': 616
+    },
+    'sackholepl': {
+        'key': 'CONFIG_MCORE_SOCKET',
+        'size': 'CONFIG_MCORE_TCP_SACKHOLE_POOL_SIZE',
+        'rule': 1,
+        'elt_size': 96
+    },
+    'tcpipqepl': {
+        'key': 'CONFIG_MCORE_SOCKET',
+        'size': 'CONFIG_MCORE_TCPIPQE_POOL_SIZE',
+        'rule': 1,
+        'elt_size': 136
+    },
+    'synpl': {
+        'key': 'CONFIG_MCORE_SOCKET',
+        'size': 'CONFIG_MCORE_TCP_SYNCACHE_POOL_SIZE',
+        'rule': 1,
+        'elt_size': 288
+    },
+    'tg_tcp_flows': {
+        'key': 'CONFIG_MCORE_TRAFFIC_GEN',
+        'size': 262144,
+        'rule': 0,
+        'elt_size': 40
+    },
+    'uso': {
+        'key': 'CONFIG_MCORE_FPU_SO',
+        'size': 65535,
+        'rule': 0,
+        'elt_size': 24
+    }
+}
+
+_REL_FPNSDK_CFG = '../6WINDGate/etc/fpnsdk.config'
+_REL_FP_CFG = '../6WINDGate/etc/fp.config'
+
+# --------------------------- main class ---------------------------------------
+
+class FastPathCompilationOption(object):
+    # TODO: add docstring
+
+    def __init__(self):
+        self.max_core = 1
+        self.max_port = 1
+        self.cacheline_size = 1
+        self.ring_size = 1
+        self.crypto_session_nb = 0
+        self.crypto_buffers_nb = 0
+        self.mempool_list = {}
+
+    def __str__(self):
+        fpconf_txt = 'max_core: %d, max_port: %d\n' % (self.max_core,
+                                                       self.max_port)
+        for key, value in self.mempool_list.iteritems():
+            fpconf_txt += 'name %s, ' % key
+            fpconf_txt += str(value)
+        return fpconf_txt
+
+    def fpnsdk_ports_cores_rings(self, buf):
+        """
+        Get port, core and cacheline information
+
+        :arg str buf:
+            Content of the fpnsdk.config that contains information for port
+            core and cacheline
+        """
+        if 'CONFIG_MCORE_FPE_VFP=' in buf:
+            self.max_core = 128
+            self.max_port = 64
+            self.cacheline_size = 32
+        elif 'CONFIG_MCORE_ARCH_OCTEON=' in buf:
+            self.max_core = 32
+            self.max_port = 63
+            self.cacheline_size = 128
+        elif 'CONFIG_MCORE_ARCH_DPDK=' in buf:
+            self.max_core = 128
+            self.max_port = 32
+            self.cacheline_size = 64
+        elif 'CONFIG_MCORE_ARCH_XLP=' in buf:
+            self.max_core = 64
+            self.max_port = 128
+            self.cacheline_size = 64
+        elif 'CONFIG_MCORE_ARCH_TILEGX=' in buf:
+            self.max_core = 72
+            self.max_port = 32
+            self.cacheline_size = 64
+
+    def memory_need(self, count):
+        """
+        Compute memory size needed by the different memory pool
+
+        :arg int count:
+            Number of used sockets (some memory pool are present
+            on each sockets)
+        """
+        need = 0
+        for value in self.mempool_list.itervalues():
+            if value.usedcount:
+                mul = count
+            else:
+                mul = 1
+            if value.cachealigned:
+                new_need = math.ceil(value.elt_size / self.cacheline_size)
+                new_need *= value.elt_nb * mul * self.cacheline_size
+            else:
+                new_need = value.elt_nb * value.elt_size * mul
+            # Add ring needs
+            new_need += round_square2(value.elt_nb) * 8 * mul
+            # Add fpn_mempool header
+            new_need += 100000 * mul
+            # Set to minimal allocation if needed
+            if new_need < (get_minimal_heap_size(1) * mul):
+                new_need = get_minimal_heap_size(1) * mul
+            need += new_need
+        return need
+
+    def add_memory(self, name, cachealigned, elt_nb, elt_size, count):
+        """
+        Add a memory pool
+
+        :arg string name:
+            Name of the memory pool
+        :arg boolean cachealigned:
+            True if the elt_size must be aligned to the cache size
+        :arg int elt_nb:
+            Number of elements
+        :arg int elt_size:
+            Size of an element
+        :arg boolean count:
+            True if the memory pool can be created several times (on by used
+            socket)
+        """
+        if not name in self.mempool_list:
+            self.mempool_list[name] = MemoryPool(cachealigned, elt_nb,
+                                                 elt_size, count)
+
+    def remove_memory(self, name):
+        """
+        Remove a memory pool
+
+        :arg string name:
+            Name of the memory pool
+        :arg int count:
+            Number of used sockets (some memory pool are present
+            on each sockets)
+        """
+        if name in self.mempool_list:
+            del self.mempool_list[name]
+
+# --------------------------- subclasses ---------------------------------------
+
+class MemoryPool(object):
+    def __init__(self, cachealigned, elt_nb, elt_size, used_count):
+        self.cachealigned = cachealigned
+        self.elt_nb = elt_nb
+        self.elt_size = elt_size
+        self.usedcount = used_count
+
+    def __str__(self):
+        mempool_txt = 'elt_nb: %d, elt_size: %d\n' % (self.elt_nb,
+                                                      self.elt_size)
+        return mempool_txt
+
+# --------------------------- private functions --------------------------------
+
+def _config_isset(key, buf):
+    """
+    Check is the key is set to y in the provided buffer
+
+    :arg string key:
+        key to find
+    :arg string file:
+        file to parse
+    :returns:
+        True if key is present
+    """
+    return _config_value(key, buf) == 'y'
+
+def _config_value(key, buf):
+    """
+    Find value set to key in the provided file
+
+    :arg string key:
+        key to find
+    :arg string file:
+        file to parse
+    :returns:
+        value set to the key or None if key is not present
+    """
+    match = re.search(r'^%s=(.*)$' % key, buf, re.MULTILINE)
+    if match:
+        return match.group(1)
+    else:
+        return None
+
+# ------- public function to create a FastPathCompilationOption object ---------
+
+def parse_fp_options():
+    """
+    Parse configuration file to retrieve main information mandatory to compute
+    memory needs of fast path regarding the fast-path.env file configuration
+    """
+
+    # Retrieve path where important config files are installed
+    fpcpopt = FastPathCompilationOption()
+    fp_executable = find_executable('fast-path.sh')
+    if not fp_executable:
+        print 'ERROR: fast path is not installed on the machine'
+        sys.exit(1)
+    path = os.path.dirname(fp_executable)
+
+    with open(os.path.join(path, _REL_FPNSDK_CFG), 'r') as f:
+        buf = f.read()
+
+        fpcpopt.fpnsdk_ports_cores_rings(buf)
+
+        crypto_session_nb = int(_config_value('CONFIG_MCORE_CRYPTO_MAX_SESSIONS', buf))
+        fpcpopt.crypto_session_nb = crypto_session_nb
+        crypto_buffers_nb = int(_config_value('CONFIG_MCORE_CRYPTO_BUFFERS', buf))
+        fpcpopt.crypto_buffers_nb = crypto_buffers_nb
+        ring_offset = int(_config_value('CONFIG_MCORE_FPN_DRING_ORDER', buf))
+        fpcpopt.ring_size = 2 ** ring_offset
+
+        for key, value in _FPN_MEMORY_POOL.iteritems():
+            if _config_isset(value['key'], buf):
+                if value['size'] == 'session_nb':
+                    fpcpopt.mempool_list[key] = MemoryPool(True,
+                                                           fpcpopt.crypto_session_nb,
+                                                           value['elt_size'],
+                                                           False)
+                else:
+                    fpcpopt.mempool_list[key] = MemoryPool(True,
+                                                           fpcpopt.crypto_buffers_nb,
+                                                           value['elt_size'],
+                                                           False)
+
+    with open(os.path.join(path, _REL_FP_CFG), 'r') as f:
+        buf = f.read()
+
+        for key, value in _FP_MEMORY_POOL.iteritems():
+            if _config_isset(value['key'], buf):
+                if value['size'].isdigit():
+                    size = value['size']
+                else:
+                    size = int(_config_value(value['size'], buf))
+                if value['rule'] == 1:
+                    size += 32 * fpcpopt.max_core
+                fpcpopt.mempool_list[key] = MemoryPool(True, size,
+                                                       value['elt_size'], False)
+
+    return fpcpopt
+
+# pci_card.py #
+class PCICardFamily(object):
+
+    def __init__(self, name, product_ids, vendor_id,
+                 required_addons=None, capabilities=None):
+        self.name = name
+        self.product_ids = product_ids
+        self.vendor_id = vendor_id
+        self.required_addons = required_addons or []
+        self.capabilities = capabilities
+
+    def __str__(self):
+        return self.name
+
+class EthernetCapabilities(object):
+
+    def __init__(self, rxq, txq):
+        self.rxq = rxq
+        self.txq = txq
+
+class CryptoCapabilities(object):
+
+    def __init__(self, option_name, option_mode, pool_size,
+                 session_size, context_size):
+        self.option_name = option_name
+        self.option_mode = option_mode
+        self.pool_size = pool_size
+        self.context_size = context_size
+        self.session_size = session_size
+
+# --------------------------- globals and define -------------------------------
+_ALL = [
+    PCICardFamily(
+        name='Intel Physical EM',
+        product_ids=[
+            '100e', '100f', '1011', '1010', '1012', '105e', '105f',
+            '1060', '10d9', '10da', '10a4', '10d5', '10a5', '10bc',
+            '107d', '107e', '107f', '10b9', '109a', '10d3', '10f6'
+        ],
+        vendor_id='8086',
+    ),
+    PCICardFamily(
+        name='Intel Physical IGB',
+        product_ids=[
+            '10c9', '10e6', '10e7', '10e8', '1526', '150a', '1518',
+            '150d', '10a7', '10a9', '10d6', '150e', '150f', '1510',
+            '1511', '1516', '1527', '1521', '1522', '1524', '1546',
+            '1533', '1534', '1535', '1536', '1537', '1538', '1539',
+            '1f40', '1f41', '1f45', '0438', '043a', '043c', '0440'
+        ],
+        vendor_id='8086',
+    ),
+    PCICardFamily(
+        name='Intel Physical IXGBE',
+        product_ids=[
+            '10b6', '1508', '10c6', '10c7', '10c8', '150b', '10db',
+            '10dd', '10ec', '10f1', '10e1', '10f4', '10f7', '1514',
+            '1517', '10f8', '000c', '10f9', '10fb', '11a9', '1f72',
+            '17d0', '0470', '152a', '1529', '1507', '154d', '154a',
+            '1557', '10fc', '151c', '1528', '1560'
+        ],
+        vendor_id='8086',
+    ),
+    PCICardFamily(
+        name='Intel Physical I40',
+        product_ids=[
+            '1572', '1573', '1574', '157f', '1580', '1581', '1582',
+            '1583', '1584', '1585'
+        ],
+        vendor_id='8086',
+    ),
+    PCICardFamily(
+        name='Intel Virtual e1000',
+        product_ids=[
+            '10ca', '152d', '1520', '152f'
+        ],
+        vendor_id='8086',
+    ),
+    PCICardFamily(
+        name='Intel Virtual ixgbe',
+        product_ids=[
+            '10ed', '152e', '1515', '1530'
+        ],
+        vendor_id='8086',
+    ),
+    PCICardFamily(
+        name='Intel Virtual i40',
+        product_ids=[
+            '154c', '1571'
+        ],
+        vendor_id='8086',
+    ),
+    PCICardFamily(
+        name='virtio',
+        product_ids=[
+            '1000', '1001', '1002', '1003', '1004', '1005', '1006', '1007',
+            '1008', '1009', '100a', '100b', '100c', '100d', '100e', '100f',
+            '1010', '1011', '1012', '1013', '1014', '1015', '1016', '1017',
+            '1018', '1019', '101a', '101b', '101c', '101d', '101e', '101f',
+            '1020', '1021', '1022', '1023', '1024', '1025', '1026', '1027',
+            '1028', '1029', '102a', '102b', '102c', '102d', '102e', '102f',
+            '1030', '1031', '1032', '1033', '1034', '1035', '1036', '1037',
+            '1038', '1039', '103a', '103b', '103c', '103d', '103e', '103f'
+        ],
+        vendor_id='1af4',
+    ),
+    PCICardFamily(
+        name='oce',
+        product_ids=[
+            '0720'
+        ],
+        vendor_id='10df',
+        required_addons=[
+            'librte_pmd_oce.so'
+        ],
+    ),
+    PCICardFamily(
+        name='VMWare',
+        product_ids=[
+            '07b0'
+        ],
+        vendor_id='15ad',
+        capabilities=EthernetCapabilities(8, 8),
+    ),
+    PCICardFamily(
+        name='FastVnic',
+        product_ids=[
+            '1110'
+        ],
+        vendor_id='1af4',
+        required_addons=[
+            'librte_pmd_fast_vnic.so'
+        ],
+    ),
+    PCICardFamily(
+        name='Mellanox',
+        product_ids=[
+            '1003', '1004', '1007'
+        ],
+        vendor_id='15b3',
+        required_addons=[
+            'librte_pmd_mlx4.so'
+        ],
+    ),
+    PCICardFamily(
+        name='Nitrox',
+        product_ids=[
+            '0010', '0011'
+        ],
+        vendor_id='177d',
+        required_addons=[
+            'librte_crypto_nitrox.so'
+        ],
+        capabilities=CryptoCapabilities('nitrox', 1, 640, 128, 768),
+    ),
+    PCICardFamily(
+        name='Intel Quickassist Cavecreek',
+        product_ids=[
+            '0434'
+        ],
+        vendor_id='8086',
+        required_addons=[
+            'librte_crypto_quickassist.so'
+        ],
+        capabilities=CryptoCapabilities('quickassist', 2, 960, 88, 1280),
+    ),
+    PCICardFamily(
+        name='Intel Quickassist Coletocreek',
+        product_ids=[
+            '0435'
+        ],
+        vendor_id='8086',
+        required_addons=[
+            'librte_crypto_quickassist.so'
+        ],
+        capabilities=CryptoCapabilities('quickassist', 1, 960, 88, 1280),
+    ),
+    PCICardFamily(
+        name='Intel Multibuffer',
+        product_ids=[
+            'ffff'     # dummy value as multibuffer crypto is not a PCI card
+        ],
+        vendor_id='8086',
+        required_addons=[
+            'librte_crypto_multibuffer.so'
+        ],
+        capabilities=CryptoCapabilities('multibuffer', 0, 384, 128, 1280),
+    ),
+]
+
+class CardNotSupported(Exception):
+    pass
+
+def find_card_family(vendor_id, product_id):
+    """
+    Check if PCI card (vendor_id, product_id) is managed by fast path
+
+    :arg string vendor_id:
+        vendor id of the PCI card
+    :arg string product_id:
+        product id of the PCI card
+    :returns PCICardFamily card:
+        Information relative to the PCI card if supported by fast path, an
+        exception otherwise
+    """
+
+    for family in _ALL:
+        if family.vendor_id == vendor_id and product_id in family.product_ids:
+            return family
+
+    raise CardNotSupported('%s:%s' % (vendor_id, product_id))
+
+# util.py #
+
+# --------------------------- globals and define -------------------------------
+# On dpdk any created heap as a minimal size of 11 Mb
+HEAP_SIZE_IN_MB = 0
+HEAP_SIZE_IN_BYTES = 1
+_DPDK_HEAP_SIZE = 11
+
+# --------------------------- private functions --------------------------------
+
+def _check_cpu_list(cpulist_string):
+    """
+    Check that given string matchs kernel representation using the PCI
+    card (representation has the  'a-b,c-d,...' format).
+
+    :arg str cpulist_string:
+        string representation of cpus to check
+    :returns:
+        True if the string matchs, False otherwise
+    """
+    tmp = cpulist_string.rsplit(',')
+    for i in range(0, len(tmp)):
+        if tmp[i].isdigit() == False:
+            tmp2 = tmp[i].rsplit('-')
+            if len(tmp2) != 2:
+                return False
+            if (tmp2[0].isdigit() == False) or (tmp2[1].isdigit() == False):
+                return False
+            if int(tmp2[0]) >= int(tmp2[1]):
+                return False
+    return True
+
+def _run_multi_command(cmd):
+    """
+    Execute multiple shell commands in one line
+
+    :returns:
+        The output of the commands
+    """
+
+    f = os.popen(cmd)
+    buf = f.read()
+    return buf
+
+def _run_command(cmd, fail_on_error=False, **popenargs):
+    """
+    Execute a single shell command.
+
+    :raises subprocess.CalledProcessError:
+        If ``fail_on_error`` is ``True`` and the command exit status is not 0.
+    :returns:
+        The output of the command
+    """
+    process = subprocess.Popen(shlex.split(cmd),
+                               stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT,
+                               **popenargs)
+    stdout, _ = process.communicate()
+    retcode = process.wait()
+
+    if fail_on_error and retcode != 0:
+        raise subprocess.CalledProcessError(retcode, cmd, output=stdout)
+    else:
+        return stdout
+
+# --------------- public functions  --------------------------------------------
+
+def clear(clear_screen=True):
+    """
+    Clear the console
+
+    :arg bool clear_screen:
+        If True, clear the screen.
+    """
+    if clear_screen:
+        os.system('clear')
+    else:
+        print
+        print
+
+def round_square2(value):
+    """
+    Compute the first power of 2 greater or equal to value
+
+    :returns:
+        A power of 2
+    """
+    i = 1
+
+    while value > i:
+        i *= 2
+
+    return i
+
+def mask_to_list(mask):
+    """
+    Compute list of bit position set in a mask
+
+    :returns:
+        list of bit position set in the mask
+    """
+    i = 0
+    bit_list = []
+    while mask != 0:
+        if mask & 1:
+            bit_list.append(i)
+        i += 1
+        mask >>= 1
+
+    return bit_list
+
+def mask_comp(mask1, mask2):
+    """
+    Compare two bit masks
+
+    :returns:
+        A list of 2 bit masks where:
+          - the first one is bits present in mask one but not in mask two
+          - the second one is bits present in mask two but not in mask one
+    """
+    mask = []
+
+    mask.append(mask1 - (mask1 & mask2))
+    mask.append(mask2 - (mask1 & mask2))
+
+    return mask
+
+def get_cpu_list(cpulist_string, range_list):
+    """
+    Provides a list representation of the cpulist_string
+    If a range_list is provided check that the cpulist is included in the
+    provided range_list
+
+    :arg str cpulist_string:
+        string representation of cpus in the kernel format: a-b,c-d
+    :arg str range_list:
+        string representation of authorized cpus in the kernel format: a-b,c-d
+    :returns:
+        List representation of the cplulist_string.
+        The list is empty if:
+            cpulist has a wrong format
+            cpulist is not included in the range_list (if provided)
+    """
+    tmp_list = []
+
+    if _check_cpu_list(cpulist_string) == False:
+        return tmp_list
+
+    tmp = cpulist_string.rsplit(",")
+    for i in range(0, len(tmp)):
+        if tmp[i].isdigit() == False:
+            tmp2 = tmp[i].rsplit("-")
+            for j in range(int(tmp2[0]), int(tmp2[1]) + 1):
+                tmp_list.append(j)
+        else:
+            tmp_list.append(int(tmp[i]))
+
+    # sort the list and remove duplicate
+    tmp2_list = sorted(set(tmp_list))
+
+    # check if selection is included in the authorized cpu list (range_list)
+    if range_list:
+        if set(tmp2_list).issubset(set(range_list)) == False:
+            return []
+
+    return tmp2_list
+
+def cpu_list_to_string(cpu_list):
+    """
+    Provides a string representation of a list of cpus
+
+    :arg list cpu_list:
+        list of cpus
+    :returns:
+        A string representation with the kernel format: a-b,c-d
+    """
+    if not cpu_list:
+        return ''
+
+    first = cpu_list[0]
+    last_tested = first
+    cpu_string = '%d' % first
+
+    for i in range(1, len(cpu_list)):
+        if cpu_list[i] > last_tested + 1:
+            if last_tested == first:
+                cpu_string += ',%d' % cpu_list[i]
+            else:
+                cpu_string += '-%d,%d' % (last_tested, cpu_list[i])
+            first = cpu_list[i]
+        last_tested = cpu_list[i]
+
+    if last_tested != first:
+        cpu_string += '-%d' % last_tested
+
+    return cpu_string
+
+def get_minimal_heap_size(mode):
+    """
+    Gives the minimal heap size allocated by DPDK
+
+    :arg int mode:
+        enum to indicates size units (HEAP_SIZE_IN_BYTES for bytes,
+        HEAP_SIZE_IN_MB for Mb)
+    """
+    min_heap_size = _DPDK_HEAP_SIZE
+
+    if mode == HEAP_SIZE_IN_BYTES:
+        min_heap_size *= 1024*1024
+
+    return min_heap_size
+
+def read_param_value_in_file(fp_file, key, delimiter=None):
+    """
+    Parse the given fp_file to return value set to key.
+
+    :arg str fp_file:
+        The .env file to source.
+    :arg str key:
+        The name of the parameter to read
+    :arg str delimiter:
+        delimeter used to split the value set to key
+
+    For example if fp_file contains INFO=a:b:c
+
+    >>> read_param(fp_file, 'INFO')
+    'a:b:c'
+    >>> read_param(fp_file, 'INFO', ':')
+    ['a', 'b', 'c']
+    """
+    result = _run_multi_command('. %s && echo $%s' % (fp_file, key))
+
+    result = result.rstrip()
+    if delimiter:
+        if len(result):
+            return result.rsplit(delimiter)
+        else:
+            return []
+    else:
+        return result
+
+def lspci(option):
+    """
+    Execute a lspci command with the provided option
+
+    :arg str option:
+        Option of the lspci command
+
+    """
+    return _run_command('lspci %s' % option)
+
+def find(path, name, only_folders=True):
+    """
+    Retrieve the path of a given folder or file name.
+
+    :arg str path:
+        The root folder to parse
+    :arg str name:
+        file or folder to find
+    :arg boolean only_folders:
+        Search folder only or file and folder
+
+    Execute an aquivalent of find shell command :
+      find path -name name
+    """
+    for root, dirs, files in os.walk(path):
+        if only_folders:
+            items = dirs
+        else:
+            items = dirs + files
+        if name in items:
+            return os.path.join(root, name)
+    return None
+
+# cli.py #
+
+# --------------------------- globals and define -------------------------------
+
+# --------------------------- menus -------------------------------------------
+def _edit_cryptocard(fp_mac, fp_mem, clear_screen=True):
+    """
+    Choice of crypto cards
+    """
+    while True:
+        clear(clear_screen)
+
+        print 'Crypto card selection'
+        print '=====================\n'
+        print 'B - back\n'
+        for key, pci in fp_mac.pci_crypto.iteritems():
+            crypto = pci.get_crypto()
+            if crypto.can_be_selected():
+                name = crypto.get_crypto_name()
+                if crypto.is_selected():
+                    print '%d - %s is selected' % (key, name)
+                else:
+                    print '%d - %s is not selected' % (key, name)
+
+        ans = raw_input('Enter selection to toggle it: ')
+        if (ans == 'b') or (ans == 'B') or (ans == ''):
+            break
+        if ans.isdigit():
+            if int(ans) in fp_mac.pci_crypto:
+                selected_crypto = fp_mac.pci_crypto[int(ans)].get_crypto()
+                if selected_crypto.can_be_selected():
+                    selected_crypto.toggle_info(fp_mem, fp_mac.addon_options)
+                else:
+                    raw_input('Invalid selection. Press enter to continue')
+            else:
+                raw_input('Invalid selection. Press enter to continue')
+        else:
+            raw_input('Invalid selection. Press enter to continue')
+
+
+def _edit_ethcard(fp_mac, pci_nb, clear_screen):
+
+    available_cpu = fp_mac.available_cpu(pci_nb)
+    name = fp_mac.get_network_name(pci_nb)
+    eth = fp_mac.get_network_eth(pci_nb)
+    if eth == 'none':
+        text_info = 'Configure %s PCI card (not mounted on any eth)' % name
+    else:
+        text_info = 'Configure %s PCI card mounted on %s' % (name, eth)
+
+    while True:
+        clear(clear_screen)
+        print text_info
+        print '=' * len(text_info)
+        print
+
+
+        if fp_mac.get_network_state(pci_nb) == 0:
+            print('Card is not selected. Available CPU cores to poll this card are %s'
+                  % cpu_list_to_string(available_cpu))
+        else:
+            print('Card is selected and polled by CPU cores %s. Available CPU cores to poll this card are %s'
+                  % (cpu_list_to_string(fp_mac.get_network_used_cpu(pci_nb)),
+                     cpu_list_to_string(available_cpu)))
+        print ' B - Back'
+        print ' D - Delete selection'
+        print ' X-Y,Z - Select cores to poll the card (X-Y,Z : select cores X to Y, and Z)'
+        print
+        ans = raw_input('Enter selection: ')
+        if (ans == 'b') or (ans == 'B') or (ans == ''):
+            break
+        if (ans == 'd') or (ans == 'D'):
+            fp_mac.cpu_update(pci_nb, [])
+        else:
+            entry_list = get_cpu_list(ans, available_cpu)
+            if entry_list:
+                fp_mac.cpu_update(pci_nb, entry_list)
+            else:
+                raw_input('Invalid selection. Press enter to continue')
+
+
+def _pcicard_menu(fp_mac, fpconf_fullname, clear_screen):
+    while True:
+        clear(clear_screen)
+        print 'Network port selection'
+        print '======================'
+        print
+        print 'B - back\n'
+
+        for i in range(0, fp_mac.pci_network_count):
+            name = fp_mac.get_network_name(i)
+            eth = fp_mac.get_network_eth(i)
+            cpulist = cpu_list_to_string(fp_mac.get_network_used_cpu(i))
+            if eth == 'none':
+                mount_info = '(not mounted on any eth) '
+            else:
+                mount_info = 'mounted on %s ' % eth
+            if cpulist == '':
+                cpu_info = 'not selected'
+            else:
+                cpu_info = 'selected and polled by cores %s' % cpulist
+            print '%d - %s PCI card %s%s' % (i + 1, name, mount_info, cpu_info)
+
+        ans = raw_input('Enter selection: ')
+        if (ans == 'b') or (ans == 'B') or (ans == ''):
+            break
+        else:
+            if ((ans.isdigit() == False) or
+                    (int(ans) > fp_mac.pci_network_count)):
+                raw_input('Invalid selection. Press enter to continue')
+            else:
+                _edit_ethcard(fp_mac, int(ans) - 1, clear_screen)
+
+def _main_menu(fp_mac, fp_mem, fpconf_fullname, clear_screen):
+    while True:
+        clear(clear_screen)
+        print 'Fast path configuration'
+        print '======================='
+        print
+        print 'C - Select a hardware crypto accelerator'
+        print 'N - Select a network port'
+        print
+        print 'D - Display configuration'
+        print 'S - Save configuration and exit'
+        print 'Q - Quit'
+        print
+
+        ans = raw_input('Enter selection: ')
+        if (ans == 'q') or (ans == 'Q'):
+            break
+        if (ans == 'c') or (ans == 'C'):
+            _edit_cryptocard(fp_mac, fp_mem, clear_screen)
+        elif (ans == 'n') or (ans == 'N'):
+            _pcicard_menu(fp_mac, fpconf_fullname, clear_screen)
+        elif (ans == 's') or (ans == 'S') or (ans == 'd') or (ans == 'D'):
+            fp_param = generate_parameter(fp_mac, fp_mem)
+            if (ans == 'd') or (ans == 'D'):
+                clear(clear_screen)
+                print fp_param
+                print
+                raw_input('Press enter to continue')
+            else:
+                f = open(fpconf_fullname, 'w')
+                f.write(str(fp_param))
+                f.close()
+                break
+        else:
+            raw_input('Invalid selection. Press enter to continue')
+
+# --------------------------- main --------------------------------------------
+def main():
+    parser = argparse.ArgumentParser(description='Create, check and display the '
+                                     'fast path configuration file. With no '
+                                     'arguments, display information about the '
+                                     'selected PCI crypto and network cards.')
+
+    parser.add_argument('-c', '--check',
+                        action='store_true',
+                        default=False,
+                        help='Check existing configuration')
+    parser.add_argument('-f', '--file',
+                        dest='file',
+                        help='Specify the fullname (path + name) of the fast path '
+                             'configuration file to create or to check. '
+                             'Default path is specified by the environment '
+                             'variable CONF_FILE_fast_path or set to '
+                             '/usr/local/etc/fast-path.env',
+                        default=os.getenv('CONF_FILE_fast_path',
+                                          '/usr/local/etc/fast-path.env'))
+    parser.add_argument('-i', '--interact',
+                        action='store_true',
+                        default=False,
+                        help='Run the configuration wizard')
+    parser.add_argument('-m', '--machinedisplay',
+                        action='store_true',
+                        default=False,
+                        help='Display system information')
+    parser.add_argument('-n', '--new',
+                        action='store_true',
+                        default=False,
+                        help=' Create a new configuration file (overwrite '
+                             'existing, if any)')
+    parser.add_argument('-N', '--no-clear',
+                        dest='clear_screen',
+                        action='store_false',
+                        default=True,
+                        help='Do not clear console when running the '
+                             'configuration wizard')
+
+    args = parser.parse_args()
+
+    fp_machine = scan_machine()
+
+    if args.machinedisplay:
+        print fp_machine
+        sys.exit(0)
+
+    fp_mem = parse_fp_options()
+
+    if not args.new or args.check:
+        fp_param = read_config(args.file)
+        errors = fp_machine.update_with_config(fp_param, fp_mem)
+
+    if args.check:
+        print '''\
+Check configuration
+===================
+'''
+        need_conf = generate_parameter(fp_machine, fp_mem)
+        check_config(fp_param, need_conf, errors)
+        sys.exit(0)
+
+    if args.interact:
+        fp_machine.clean_config()
+        _main_menu(fp_machine, fp_mem, args.file, args.clear_screen)
+    else:
+        fp_machine.show()
+
+#------------------------------------------------------------------------------
+if __name__ == '__main__':
+    main()
+
+# Original file
+
+#from fp_conf_tools import cli
+
+#cli.main()
+
+# ------- temporary fix: merge all python files in one files ---------- #

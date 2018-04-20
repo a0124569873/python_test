@@ -1,0 +1,30 @@
+# Copyright 2014 6WIND S.A.
+
+config VNB_NODE_MPLS
+	bool "Enable MPLS VNB node"
+	default y
+
+config VNB_MPLS_ETHER_MAX_IN
+	int "max mpls_ether input hooks"
+	depends on VNB_NODE_MPLS
+	default 64
+
+config VNB_MPLS_ILM2NHLFE_MAX_ETHER
+	int "max mpls_ilm2nhlfe ether hooks"
+	depends on VNB_NODE_MPLS
+	default 64
+
+config VNB_MPLS_ILM2NHLFE_MAX_RAW
+	int "max mpls_ilm2nhlfe raw hooks"
+	depends on VNB_NODE_MPLS
+	default 64
+
+config VNB_ILM2NHLFE_THASH_ORDER
+       int "mpls_ilm2nhlfe hash table order"
+       depends on VNB_NODE_MPLS
+       default 10
+
+config VNB_MPLS_LSP_DIVERT
+       bool "LSP ping divert code"
+       depends on VNB_NODE_MPLS
+       default n

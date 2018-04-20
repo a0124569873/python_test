@@ -1,0 +1,31 @@
+# Copyright 2013 6WIND S.A.
+
+menu "FPN-SDK DPDK options"
+
+config MCORE_RTE_SHARED_QUEUES
+	bool "Enable port queues to be shared"
+	default y
+	help
+	  Enable RX/TX port queues to be shared between multiple cores
+
+config MCORE_USE_GLIBC_MALLOC
+	bool "Use glibc malloc/free"
+	default n
+	help
+	  Use the generic userland malloc functions instead of RTE functions
+
+config MCORE_FPN_CRYPTO_ASYNC
+	def_bool y
+
+config MCORE_ARCH_HAS_SHARED_LIBRARY
+	def_bool y
+
+config MCORE_DPDK_RESET_VF
+	bool "Handle reset for ixgbevf pmd"
+	default y
+	depends on MCORE_FPVI_DP
+	help
+	  When ixgbe PF driver resets VFs, the ixgbevf pmd does not reinit
+	  itself. Enabling this option activates a workaround for this to
+	  happen.
+endmenu

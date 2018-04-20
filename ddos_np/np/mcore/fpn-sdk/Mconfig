@@ -1,0 +1,337 @@
+# Copyright 2013 6WIND S.A.
+
+menu "FPN-SDK options"
+
+config MCORE_FPN
+	bool "FPN-SDK support"
+	default y
+
+if MCORE_FPN
+
+config MCORE_ARCH_DPDK
+	def_bool y if (MCORE_ARCH_X86_64 || MCORE_ARCH_X86 || MCORE_ARCH_XLP_DPDK) && MCORE_FPE_MCEE
+
+choice
+	prompt "FPN arch"
+	help
+	  Select architecture.
+
+	config MCORE_ARCH_X86_64
+		bool "x86-64"
+	help
+	  Intel X86 64-bit architecture.
+
+	config MCORE_ARCH_X86
+		bool "x86-32"
+	help
+	  Intel X86 32-bit architecture.
+
+	config MCORE_ARCH_OCTEON
+		bool "Octeon"
+	help
+	  Cavium Octeon architecture.
+
+	config MCORE_ARCH_XLP
+		bool "XLP"
+	help
+	  Broadcom XLP architecture.
+
+	config MCORE_ARCH_XLP_DPDK
+		bool "XLP-DPDK"
+	help
+	  Broadcom XLP architecture using DPDK.
+
+	config MCORE_ARCH_TILEGX
+		bool "TileGx"
+	help
+	  Tilera TileGx architecture.
+
+	config MCORE_ARCH_NPS
+		bool "EZchip NPS"
+	help
+	  EZchip NPS architecture.
+
+endchoice
+
+choice
+	prompt "FPN implementation"
+	default MCORE_FPE_MCEE
+	help
+	 Select implementation: MCEE, VFP.
+
+	config MCORE_FPE_MCEE
+		bool "MCEE"
+	help
+	  MCEE implementation.
+
+	config MCORE_FPE_VFP
+		bool "VFP"
+		depends on MCORE_ARCH_X86 || MCORE_ARCH_X86_64
+	help
+	  VFP implementation.
+endchoice
+
+config MCORE_TIMER_GENERIC
+	bool "Generic timer support"
+	default y
+	help
+	  Enable generic timer support.
+
+config MCORE_TIMER_GENERIC_RESOLUTION_MS
+	int "Timer resolution value in milliseconds"
+	depends on MCORE_TIMER_GENERIC
+	default 10
+
+config MCORE_TIMER_GENERIC_TABLE_ORDER
+	int "Timer table order to set the table size"
+	depends on MCORE_TIMER_GENERIC
+	default 12
+
+config MCORE_TIMER_GENERIC_DEBUG_LEVEL
+	int "Timer generic debug level"
+	depends on MCORE_TIMER_GENERIC
+	default 0
+
+config MCORE_FPN_CORE_BARRIER
+	bool "Core barrier"
+	default y
+	help
+	  Enable Core barrier to assist synchronization.
+
+config MCORE_FPN_GC
+	bool "Garbage collector"
+	depends on MCORE_FPN_CORE_BARRIER
+	default y
+	help
+	  Add a garbage collector mechanism that allow to postpone
+	  an action on an object after we are sure that all cores
+	  have done at least one round in the main loop.
+
+config MCORE_FPN_HOOK
+	bool "Hooks support"
+	depends on !MCORE_ARCH_OCTEON
+	default y
+	help
+	  Make it possible to have user-defined handlers.
+
+config MCORE_FPN_MBUF_CLONE
+	bool "Mbuf clone support"
+	depends on MCORE_ARCH_XLP || MCORE_ARCH_OCTEON ||\
+			   MCORE_FPE_VFP
+	default n
+	help
+	  Enable duplicatation of mbuf without data copy.
+
+config MCORE_AATREE
+	bool "AA tree library"
+	default n
+	help
+	  Arne Anderson Tree library. This library offers functions for fast
+	  insertion of object in long ordered chained lists.
+
+config MCORE_AATREE_SANITY_CHECK
+	bool "AA tree sanity check"
+	depends on MCORE_AATREE
+	default n
+	help
+	  Enable sanity check in AA tree implementation.
+
+config MCORE_TIMER_GENERIC_SANITY_CHECK
+	bool "Timer generic sanity check"
+	depends on MCORE_TIMER_GENERIC
+	default n
+	help
+	  Enable sanity check in Timer generic implementation.
+
+
+config MCORE_FPN_CRYPTO
+	bool "Crypto support"
+	default n
+	help
+	  Enable crypto support.
+
+config MCORE_FPN_RTE_CRYPTO
+	bool "Hardware acceleration support"
+	depends on MCORE_ARCH_DPDK
+	depends on MCORE_FPN_CRYPTO
+	default y
+	help
+	  Enable support of hardware acceleration for crypto operations.
+
+config MCORE_CRYPTO_MAX_SESSIONS
+	int "Maximum available cryptographic sessions"
+	depends on MCORE_FPN_CRYPTO
+	default 8192
+	help
+	  Cryptography code will reserve space to store
+	  sessions in pools. If we are doing IPsec, we
+	  need one session per sa.
+
+config MCORE_CRYPTO_BUFFERS
+	int "Number of buffers allocated for cryptography"
+	depends on MCORE_FPN_CRYPTO
+	default 32768
+	help
+	  Crypto library will allocate buffers from
+	  pools to store per buffer crypto parameters.
+	  This parameter is the size of the buffer pool.
+
+config MCORE_FPN_CRYPTO_GENERIC
+	bool "Generic software crypto"
+	depends on MCORE_FPN_CRYPTO
+	default y if MCORE_ARCH_X86
+	default y if MCORE_ARCH_X86_64
+	default n
+
+config MCORE_FPVI
+	bool "FPVI support"
+	default y
+	help
+	  Enable FPVI support.
+
+choice
+	prompt "FPVI implementation"
+	default MCORE_FPVI_DP
+	depends on MCORE_FPVI && (MCORE_ARCH_DPDK || MCORE_ARCH_TILEGX || MCORE_ARCH_X86 || MCORE_ARCH_X86_64)
+	help
+	 Select implementation: TAP or Dataplane Proxy interfaces.
+
+	config MCORE_FPVI_TAP
+		bool "FPVI using TAP interfaces"
+		depends on (MCORE_ARCH_DPDK || MCORE_ARCH_TILEGX)
+		help
+		  Enable FPVI using TAP interfaces.
+
+	config MCORE_FPVI_DP
+		bool "FPVI using dataplane proxy interfaces"
+		select MCORE_SHM_GENERIC
+		help
+		  Enable FPVI support using dataplane proxy interfaces.
+
+endchoice
+
+config MCORE_FPVI_TAP_DEBUG_LEVEL
+	int "FPVI TAP debug level"
+	default 0
+	depends on MCORE_FPVI_TAP
+
+config MCORE_FPN_DRING_ORDER
+	int "ring order for FPVI DP"
+	default 6
+	depends on MCORE_FPVI_DP && MCORE_ARCH_DPDK
+	help
+	  Configure order value of RX/TX rings for FPVI.
+
+config MCORE_DEBUG_CPU_USAGE
+	bool "CPU usage"
+	default y
+	help
+	  Enable CPU cycles usage accounting.
+
+config MCORE_SHM_GENERIC
+	bool "Use generic driver for shared memory"
+	default n if MCORE_ARCH_OCTEON
+	default y
+	help
+	  Generic driver for shared memory.
+
+choice
+	prompt "Shared memory implementation"
+	default MCORE_SHM_GENERIC_KMOD
+	depends on MCORE_SHM_GENERIC
+	help
+	  Select shared memory implementation: generic, posix or stub.
+
+	config MCORE_SHM_GENERIC_KMOD
+		bool "Use kernel module driver for shared memory"
+		help
+		  Kernel module driver for shared memory.
+
+	config MCORE_SHM_GENERIC_POSIX
+		bool "Use Posix SHM for shared memory"
+		depends on !MCORE_FPVI_DP
+		help
+		  Alternative implementation of shared memory support
+		  using the Posix shmem.
+
+	config MCORE_SHM_GENERIC_STUB
+		bool "Use a stub for shared memory (malloc)"
+		depends on !MCORE_FPVI_DP
+		help
+		  Stubbed implementation of shared memory using
+		  malloc. When enabled, this memory cannot be shared
+		  with other applications or kernel.
+endchoice
+
+config MCORE_L2_INFRA
+	bool "L2 VLAN infra support"
+	default y if MCORE_FPE_VFP
+	default n
+	depends on MCORE_FPVI && (MCORE_ARCH_X86 || MCORE_ARCH_X86_64)
+	help
+	  Support for L2 VLAN ports.
+
+config MCORE_L2_INFRA_ETH_TYPE
+	int "Ethertype used for L2 VLAN infra (0x8100)"
+	default 33024
+	depends on MCORE_L2_INFRA
+	help
+	  Ethertype used to detect infrastructure VLANs.
+
+config MCORE_INTERCORE
+	bool "Enable intercore rings"
+	default y
+	depends on MCORE_ARCH_DPDK
+	help
+	  Add intercore rings, for pipeline implementation.
+
+config MCORE_SW_TCP_LRO
+	bool "Enable compilation of software TCP Large receive offload feature"
+	default n
+	depends on MCORE_ARCH_DPDK
+	help
+	  Large receive offload allows to reassemble TCP packets before
+	  sending them to the network stack. This option enables the compilation
+	  of software TCP reassembly. The feature has to be activated at
+	  run-time. It will increase performance of TCP as less packets will
+	  be processed by the stack. On the other hand, it will slow down
+	  processing if TCP packets cannot be reassembled. Moreover, this
+	  feature should not be enabled on a router as it breaks PMTU
+	  discovery.
+
+config MCORE_FORCE_HW_TSO
+	bool "Enable compilation of Force TCP Segmentation Offload feature"
+	default y if MCORE_ARCH_DPDK
+	default n
+	help
+	  TCP Segmentation Offload allows to delegate the segmentation of
+	  TCP packets to the hardware. This option can be used to force the
+	  use of hardware TSO for packets transmitted on a specific physical
+	  port.
+
+source "Mconfig.debug"
+
+if MCORE_ARCH_DPDK
+source dpdk/Mconfig
+endif
+if MCORE_ARCH_OCTEON
+source octeon/Mconfig
+endif
+if MCORE_ARCH_XLP
+source xlp/Mconfig
+endif
+if MCORE_ARCH_TILEGX
+source tilegx/Mconfig
+endif
+if MCORE_ARCH_NPS
+source nps/Mconfig
+endif
+
+if MCORE_FPE_VFP
+source emulator/Mconfig
+endif
+
+source "apps/Mconfig"
+endif
+
+endmenu

@@ -1,0 +1,35 @@
+# Copyright 2013 6WIND S.A.
+
+menu "Fast path Multicast IPv6 options"
+
+config MCORE_MULTICAST6
+	bool "IPv6 multicast support"
+	depends on MCORE_IPV6
+	default y
+	help
+	  Enable IPv6 multicast support.
+
+config MCORE_MULTICAST6_MFC_LINE_ORDER
+	int "Multicast hash table size order"
+	depends on MCORE_MULTICAST6
+	default 6
+	help
+	  Define the hash table size order. Size of the hash table is 2^order.
+	  Default order is 6 (hence default hash table size is 64).
+
+config MCORE_MULTICAST6_MFC_MAX
+	int "Maximum number of multicast forwarding cache entries"
+	depends on MCORE_MULTICAST6
+	default 256
+	range 1 65535
+	help
+	  Maximum number of multicast routes (multicast forwarding cache
+	  entries) managed in the fast path.
+	  Default is 256 (maximum value is 65535).
+
+config CONFIG_MCORE_MULTICAST6_GRP_MAX
+	int "Maximum number of multicast groups to allow to forward"
+	depends on MCORE_MULTICAST6
+	default 20
+
+endmenu

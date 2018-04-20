@@ -1,0 +1,20 @@
+vnb-1-0
+-------
+- add stats on iface interface
+- add stats on eiface interface
+RC6
+- fix ng_ksocket memory leak
+RC5
+- add ng_ksocket and ng_iface nodes
+RC4
+- fix network capture packets (add pseudo ethertype VNB)
+RC3
+- add ng_tee node
+- add ng_bridge node
+RC2
+- add ng_eiface node
+- add ng_etf node
+- add ng_vlan node
+RC1
+- add ng_ether node
+- add hooks for ng_ether (input/output)

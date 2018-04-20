@@ -1,0 +1,25 @@
+# Copyright 2013 6WIND S.A.
+
+menu "Fast path TAP options"
+
+config MCORE_TAP
+	bool "Tapping"
+	default y
+	help
+	  Enable tapping (tcpdump).
+
+config MCORE_TAP_BPF
+	bool "TAP BPF"
+	default y
+	depends on MCORE_TAP
+	help
+	  Enable BPF in tapping.
+
+config MCORE_TAP_CIRCULAR_BUFFER
+	bool "TAP CIRCULAR BUFFER"
+	default n
+	depends on MCORE_TAP && MCORE_TAP_BPF
+	help
+	  Enable circular packet capture.
+
+endmenu

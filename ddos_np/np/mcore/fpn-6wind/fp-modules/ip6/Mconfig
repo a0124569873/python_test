@@ -1,0 +1,41 @@
+# Copyright 2013 6WIND S.A.
+
+menu "Fast path IPv6 options"
+
+config MCORE_IPV6
+	bool "IPv6 support"
+	depends on MCORE_IP
+	default n
+	help
+	  Enable IPv6 support.
+
+config MCORE_RT_IPV6_BASE8
+	bool "IPv6 Routing 8/..."
+	depends on MCORE_IPV6
+	default n
+	help
+	  Enable IPv6 routing topology 8/... (default is 16/8/...).
+
+config MCORE_IPV6_8_TABLE_ENTRIES
+	int "IPv6 /8 entries"
+	depends on MCORE_IPV6
+	default 1000
+
+config MCORE_IPV6_NBRTENTRIES
+	int "IPv6 max routes entries"
+	depends on MCORE_IPV6
+	default 50000
+
+config MCORE_IPV6_NBNHENTRIES
+	int "IPv6 max neighbors entries"
+	depends on MCORE_IPV6
+	default 5000
+
+source "fp-modules/reass6/Mconfig"
+
+config MCORE_RPF_IPV6
+	bool "IPv6 Reverse Path Forwarding check"
+	depends on MCORE_IPV6
+	default y
+
+endmenu

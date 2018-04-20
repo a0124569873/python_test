@@ -1,0 +1,25 @@
+# Copyright 2014 6WIND S.A.
+
+menu "Fast path GRE options"
+
+config MCORE_GRE
+	bool "GRE support"
+	depends on MCORE_IP
+	default y
+
+config MCORE_GRE_MAX
+	int "Max GRE interfaces"
+	depends on MCORE_GRE
+	default 255
+
+config MCORE_GRE_IPV4_HASH_ORDER
+	int "GRE hash table size"
+	depends on MCORE_GRE
+	default 4
+
+config MCORE_GRE_IPV6_HASH_ORDER
+	int "GRE IPv6 hash table size"
+	depends on MCORE_GRE && MCORE_IPV6
+	default 4
+
+endmenu

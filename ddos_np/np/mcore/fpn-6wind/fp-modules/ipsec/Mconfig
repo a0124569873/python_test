@@ -1,0 +1,95 @@
+# Copyright 2013 6WIND S.A.
+
+menu "Fast path IPsec options"
+
+config MCORE_IPSEC
+	bool "IPsec support"
+	depends on MCORE_IP
+	default n
+	help
+	  Enable IPsec support.
+
+config MCORE_IPSEC_LOOKUP_PORTS
+	bool "Look up TCP/UDP ports"
+	default y
+	depends on MCORE_IPSEC
+
+config MCORE_IPSEC_VERIFY_INBOUND
+	bool "Verify inbound rules"
+	default n
+	depends on MCORE_IPSEC
+
+config MCORE_IPSEC_SPD_ADDR_HASH_TABLE
+	bool "SPD address in hash table"
+	default y
+	depends on MCORE_IPSEC
+
+config MCORE_IPSEC_SPD_ADDR_HASH_ORDER
+	int "SPD hash table order"
+	depends on MCORE_IPSEC_SPD_ADDR_HASH_TABLE
+	default 9
+
+config MCORE_IPSEC_MAX_SA_ENTRIES
+	int "Maximum SA entries"
+	depends on MCORE_IPSEC
+	default 4096
+
+config MCORE_IPSEC_MAX_SP_ENTRIES
+	int "Maximum SP entries"
+	depends on MCORE_IPSEC
+	default 2048
+
+config MCORE_IPSEC_SA_HASH_ORDER
+	int "SA hash table order"
+	depends on MCORE_IPSEC
+	default 16
+	help
+	  The number of buckets in each hash table is 2^order. The max value
+	  is 16, which corresponds to 65536 buckets.
+
+config MCORE_IPSEC_TRIE
+	bool "SPD Trie support"
+	depends on MCORE_IPSEC
+	default y
+
+config MCORE_IPSEC_TRIE_ZONE_SIZE
+	int "Fast Path IPsec trie zone size"
+	depends on MCORE_IPSEC_TRIE
+	default 31457280
+
+config MCORE_IPSEC_TRIE_OUT_DEFAULT_THRESHOLD
+	int "Fast Path IPsec output trie threshold"
+	depends on MCORE_IPSEC_TRIE
+	default 49
+
+config MCORE_IPSEC_TRIE_IN_DEFAULT_THRESHOLD
+	int "Fast Path IPsec input trie threshold"
+	depends on MCORE_IPSEC_TRIE
+	default 49
+
+config MCORE_IPSEC_TRIE_MAXRULES
+	int "Fast Path IPsec trie maximum rules"
+	depends on MCORE_IPSEC_TRIE
+	default 10000
+	help
+	  Maximum of IPsec rules that the IPsec tries can handle.
+
+config MCORE_IPSEC_INPUT_NOTIFY_UNKNOWN_SA
+	bool "IKE notification about unknown SA"
+	depends on MCORE_IPSEC
+	default n
+	help
+	  If enabled, a notification is sent to key managers when an input
+	  packet uses an unknown SA.
+
+config MCORE_IPSEC_OVERLAP
+	bool "Policy overlap support"
+	depends on MCORE_IPSEC
+	default n
+
+config MCORE_IPSEC_SA_VOLUME_LIMIT
+	bool "Volume based IPsec SA rekeying support"
+	depends on MCORE_IPSEC
+	default y
+
+endmenu

@@ -1,0 +1,47 @@
+#!/bin/sh
+#
+# Copyright 6WIND, 2010, 2013 All rights reserved.
+#
+# Kernel command-line: fp_mask=-s(0xCOREMASK|all)
+# Or read from FDT using fdt-tools (XLP, PP81)
+# Set available CPUs to userland processes from fp_mask kernel boot option.
+# Since this property is inheritable, we only need to modify PID 1 (init) and
+# optionally a list of PIDs provided on our command-line.
+
+. /usr/local/6WINDGate/etc/env
+. libcmdline.sh &&
+FP_MASK=`cmdline fp_mask` &&
+foreach_comma "${FP_MASK}" | {
+	ul_mask=''
+	while read -r opt
+	do
+		case "${opt}" in
+		-s*)
+			ul_mask="${opt#-s}"
+			;;
+		esac
+	done
+	! [ -z "${ul_mask}" ] &&
+	! [ "${ul_mask}" = 'all' ] && 
+	ul_mask=`convert_mask ${ul_mask}` &&
+	for pid in 1 "${@}"
+	do
+		echo "Applying cpumask ${ul_mask} to PID ${pid}." 1>&2
+		taskset -p "${ul_mask}" "${pid}"
+	done
+}
+
+# XLP, PP81 case
+
+if [ -x /usr/local/6bin/fdt-tools ]; then
+
+#fdt-tools -u return userland mask
+ul_mask=`/usr/local/6bin/fdt-tools -u`
+
+for pid in 1 "${@}"
+do
+	echo "Applying cpumask ${ul_mask} to PID ${pid}."
+	taskset -p "${ul_mask}" "${pid}"
+done
+
+fi

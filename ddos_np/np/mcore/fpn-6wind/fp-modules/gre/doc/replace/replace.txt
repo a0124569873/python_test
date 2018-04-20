@@ -1,0 +1,27 @@
+.. Copyright 2014 6WIND S.A.
+
+.. |configure-ip-routes| replace:: Configure IP addresses and routes:
+
+.. |create-gre| replace:: Create a new GRE interface:
+
+.. |add-route| replace:: Create a new route:
+
+.. |fp-display| replace:: Display the characteristics of GRE interfaces on
+                          the |fp|:
+
+.. |config-ip-routes| replace:: Configure IP routes:
+
+.. |disp-iface| replace:: Display all interfaces:
+
+.. |disp-neigh-routes| replace:: Display neighbors and routes:
+
+.. |delete-gre| replace:: Delete the GRE interface:
+
+.. |network-topology| replace:: We will assume the network topology is the
+                                following:
+
+.. |name-gre-interface| replace:: Name of the GRE interface.
+
+.. |capture-plaintext| replace:: When sending traffic between *100.2.2.1* and
+                                 *110.2.2.1*, you can capture plaintext
+                                 traffic on *gre1*.

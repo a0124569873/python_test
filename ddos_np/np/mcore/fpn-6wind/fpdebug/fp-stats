@@ -1,0 +1,21 @@
+#!/bin/sh
+
+if [ -f /usr/admin/fpdebug ]; then
+  FPD=/usr/admin/fpdebug
+else
+  FPD=fpdebug
+fi
+
+echo "turn" | $FPD
+echo "dump-stats" | $FPD
+echo "dump-spd all" | $FPD
+echo "dump-sad all" | $FPD
+echo "dump-nftable 4 filter all" | $FPD
+echo "dump-nftable 4 mangle all" | $FPD
+echo "dump-nftable 4 nat all" | $FPD
+echo "dump-nfct 256" | $FPD
+echo "dump-nf-cache 256 0" | $FPD
+echo "nf-nat-conntrack" | $FPD
+echo "nf-hook" | $FPD
+
+exit 0

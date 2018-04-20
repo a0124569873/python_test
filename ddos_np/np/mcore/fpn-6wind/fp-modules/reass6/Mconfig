@@ -1,0 +1,37 @@
+if MCORE_IPV6
+
+menu "Fast path IPv6 reassembly"
+
+config MCORE_IPV6_REASS
+	bool "IPv6 reass support"
+	depends on MCORE_IPV6
+	default y
+
+config MCORE_MAX_IPV6_REASS_MS
+	int "Max time in queue (ms)"
+	depends on MCORE_IPV6_REASS
+	default 2000
+
+config MCORE_MAX_IPV6_INTERFRAG_MS
+	int "Max time inter fragment (ms)"
+	depends on MCORE_IPV6_REASS
+	default 200
+
+config MCORE_REASSQ_IPV6_LIST_ORDER
+	int "Size order of procedures table"
+	depends on MCORE_IPV6_REASS
+	default 6
+	help
+	  Order of max simultaneous packet
+	  reassembly procedures.
+
+config MCORE_REASSQ_IPV6_HASH_ORDER
+	int "Size order of queues table"
+	depends on MCORE_IPV6_REASS
+	default 7
+	help
+	  Order of reassembly queues hashtable.
+
+endmenu
+
+endif

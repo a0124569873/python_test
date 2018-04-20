@@ -1,0 +1,14 @@
+# Copyright 2013 6WIND S.A.
+
+menu "FPN-SDK applications"
+
+config MCORE_FPN_APPS_TEST_CRYPTO
+	bool "Crypto API test application"
+	default y
+	depends on MCORE_FPN_CRYPTO
+	depends on MCORE_ARCH_DPDK || MCORE_ARCH_TILEGX
+	help
+	  Enable build of test-crypto application.
+	  This application implement various tests on FPN crypto API.
+
+endmenu

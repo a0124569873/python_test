@@ -1,0 +1,20 @@
+# Copyright 2013 6WIND S.A.
+
+# Main DKMS Makefile
+
+#Subdirs in build order
+SUBDIRS=shmem/linux dpvi
+
+FPNSDK_DOT_CONFIG=/usr/local/fpn-sdk/config/fpnsdk.config
+FPNSDK_CONFIG_H=/usr/local/fpn-sdk/config/fpnsdk_config.h
+FPNSDK_DIR=/usr/local/fpn-sdk
+FPNSDK_BIN=$(CURDIR)
+KERNEL_SRC?=/lib/modules/$(shell uname -r)/build
+PKG_DKMS=y
+include $(FPNSDK_DIR)/fpn-arch.mk
+.EXPORT_ALL_VARIABLES:
+
+%:
+	for i in $(SUBDIRS); do \
+	  [ ! -d $$i ] || $(MAKE) -C $(KERNEL_SRC) S=$(PWD)/$$i SUBDIRS=$(PWD)/$$i $@ || exit 1;\
+	done

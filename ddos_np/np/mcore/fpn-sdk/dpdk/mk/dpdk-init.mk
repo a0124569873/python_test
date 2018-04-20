@@ -1,0 +1,8 @@
+RTE_SDK?=/usr/local/dpdk
+RTE_TARGET=x86_64-default-linuxapp-gcc
+RTE_ARCH?=$(word 1,$(subst -, ,$(RTE_TARGET)))
+export RTE_SDK RTE_TARGET RTE_ARCH
+RTE_SDK_ADDONS?=/usr/local/dpdk-addons
+RTE_SDK_ADDONS_INCLUDE?=$(RTE_SDK_ADDONS)/include
+RTE_SDK_ADDONS_LIBPATH?=$(RTE_SDK_ADDONS)/lib
+export RTE_SDK_ADDONS RTE_SDK_ADDONS_INCLUDE RTE_SDK_ADDONS_LIBPATH

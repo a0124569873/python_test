@@ -1,0 +1,7 @@
+# Copyright 2014 6WIND S.A.
+
+config MCORE_TC_ERL
+	bool "Exception rate limit support"
+	default y
+	depends on MCORE_TC
+

@@ -1,0 +1,8 @@
+#!/bin/sh
+#
+# Copyright 2013 6WIND S.A.
+#
+# Run fp-cli non-interactively.
+
+[ $# -eq 0 ] ||
+exec fp-cli -- "$@"

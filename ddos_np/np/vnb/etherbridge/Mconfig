@@ -1,0 +1,23 @@
+# Copyright 2014 6WIND S.A.
+
+config VNB_NODE_BRIDGE
+	bool "Enable bridge VNB node"
+	default y
+
+config VNB_NODE_ETHERBRIDGE
+	bool "Enable ethernet bridge VNB node"
+	default y
+
+config VNB_NODE_ETF
+	bool "Enable ethernet filtering VNB node"
+	default y
+
+config VNB_ETHERBRIDGE_HASHTABLE_ORDER
+	int "etherbridge hash table order"
+	depends on VNB_NODE_ETHERBRIDGE
+	default 10
+
+config ETHERBRIDGE_HASHTABLE_CHECKS
+	bool "etherbridge checks on hash tables"
+	depends on VNB_NODE_ETHERBRIDGE
+	default n

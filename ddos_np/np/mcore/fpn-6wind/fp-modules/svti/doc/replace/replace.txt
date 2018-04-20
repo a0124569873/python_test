@@ -1,0 +1,40 @@
+
+.. |add-route| replace:: Add a route via the SVTI interface:
+.. |ah-esp| replace:: Select the :abbr:`AH (Authentication Headers)` or the
+                      :abbr:`ESP (Encapsulating Security Payload)` protocol.
+.. |bind-sas| replace:: Bind SAs to the SVTI interface:
+.. |bind-sps| replace:: Bind SPs to the SVTI interface:
+.. |configure-ip-routes| replace:: Configure IP addresses and routes:
+.. |create-svti| replace:: Create an SVTI interface:
+.. |create-vrf1&2| replace:: Create the *vrf1* and *vrf2* network namespaces:
+.. |delete-svti-sps| replace:: Delete SVTI SPs:
+.. |delete-svti| replace:: Delete the SVTI interface:
+.. |flush-sps| replace:: Flush all SPs:
+.. |fp-display| replace:: Display SVTI interfaces' characteristics on the fast
+                          path:
+.. |mark-any| replace:: Outer addresses' marks are *any*.
+.. |network-topology| replace:: The network topology is the following:
+.. |outer-addresses-o_key| replace:: Outer addresses' marks must match the SVTI
+                                     interface's *o_key*.
+.. |outer-addresses| replace:: Outer addresses must match the SVTI interface's
+                               local and remote addresses.
+.. |proto-sp| replace:: Protocol handled by the SP, choose between "any" or the
+                        protocol id as declared in IPv4 header (example: UDP=17,
+                        TCP=6, ICMP=1).
+.. |sas-tunnel-mode| replace:: The SAs must be in tunnel mode.
+.. |sps-tunnel-mode| replace:: The SPs must be in tunnel mode.
+.. |switch-to-vrf| replace:: Switch the network interface to the *vrf*
+                             namespace:
+.. |vpn-public-network| replace:: We will configure a VPN gateway on a network
+                                  that interconnects two sites via a public
+                                  network.
+.. |vr-desc| replace:: Id of the :abbr:`VRF (Virtual Routing and Forwarding)`
+                       where the SA is created.
+.. |vr-lvr-sp| replace:: The SPs' *vr* and *link-vr* must both be equal to the
+                         SVTI interface's *link-vrfid*.
+.. |vr-xvr-sa| replace:: The SAs' *vr* and *x-vr* must both be equal to the SVTI
+                         interface's *link-vrfid*.
+.. |wildcard-packet-selector| replace:: Since we want to apply the same policy
+                                        to all packets steered to the SVTI
+                                        interface, specify a wildcard packet
+                                        selector.

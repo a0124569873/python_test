@@ -1,0 +1,27 @@
+#########################################################################
+# beginning of overwrite part -> depend on each application
+#########################################################################
+
+PROG= snoopd
+
+SRCDIR= ${DIST_VNB}/tools/snoop
+
+SRCS= main.c core.c mld.c display.c notify.c config.c igmp.c proxy.c netlink.c
+SRCS+= in_cksum.c
+
+CFLAGS		+= ${INCKERN} -I${DIST_VNB}/sys -I${DIST_LIBNETGRAPH}  -I$(DIST_LIBEVENT) -Wall
+CFLAGS		+= -I${DIST_VNB}/etherbridge
+LDFLAGS		+= -L$(ROOTDIR)/ports/libevent -levent
+LDFLAGS		+= -L$(LIBNETGRAPH_DIR) -lnetgraph
+LDFLAGS		+= -lutil
+LDADD		+= -L$(ROOTDIR)/lib/libinet6 -linet6
+
+VPATH = ${SRCDIR}
+LIST= ${PROG}
+
+#CFLAGS+=-D__FAST_MLD_
+#########################################################################
+# end of overwrite part -> depend on each application
+#########################################################################
+include ${ROOTDIR}/mk/6windgatelinux.prog.mk
+

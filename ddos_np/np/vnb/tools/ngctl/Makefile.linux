@@ -1,0 +1,22 @@
+PROG		 = ngctl
+
+VPATH		 = ${DIST_VNB}/tools/ngctl
+
+SRCS		 = main.c mkpeer.c config.c connect.c name.c show.c list.c
+SRCS		+= msg.c debug.c shutdown.c rmhook.c status.c types.c
+SRCS		+= write.c
+SRCS		+= getstats.c
+SRCS		+= dot.c
+SRCS		+= inspeer.c insnode.c bypass.c
+SRCS		+= dump.c
+
+CFLAGS		+= -I${DIST_LIBNETGRAPH}
+CFLAGS		+= -D__linux__
+
+CFLAGS		+= ${INCVNB}
+CFLAGS		+= -Wall -W -Werror
+
+LDFLAGS		+= -L../libnetgraph
+LDADD		+= -lnetgraph
+
+LIST		 = $(PROG)

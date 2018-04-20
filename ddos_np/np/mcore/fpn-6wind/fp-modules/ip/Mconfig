@@ -1,0 +1,139 @@
+# Copyright 2013 6WIND S.A.
+
+menu "Fast path IP options"
+
+config MCORE_IP
+	bool "IP stack support"
+	default y
+	help
+	  Enable IP stack support in fastpath.
+
+config MCORE_VRF
+	bool "Virtual Routing and Forwarding"
+	depends on MCORE_IP
+	default y
+	help
+	  Enable Virtual Routing and Forwarding.
+
+config MCORE_MAX_VR
+	int "Maximum VR"
+	default 16
+	depends on MCORE_VRF
+	help
+	  Maximum number of VR.
+
+config MCORE_RT_IP_BASE8
+	bool "Routing 8/8/8/8"
+	depends on MCORE_IP
+	default n
+	help
+	  Enable routing topology 8/8/8/8 (default is 16/8/8).
+
+config MCORE_RT4_WITH_PREFIX
+	bool "Prefix and VR in IPv4 route entries"
+	depends on MCORE_IP
+	default y
+	help
+	  Store prefix and VR in IPv4 route entries
+
+config MCORE_IFDOWN_CLEANUP
+	bool "Automatic route clean-up on ifdown event"
+	depends on MCORE_IP
+	default y
+	select MCORE_RT4_WITH_PREFIX
+	help
+	  Enable automatic clean-up of routing table when interface goes down
+
+config MCORE_TCP_MSS
+	bool "TCP MSS support"
+	depends on MCORE_IP
+	default y
+	help
+	  Enable TCP MSS support.
+
+config MCORE_MAX_MPATH
+	int "ECMP maximum path"
+	depends on MCORE_IP
+	default 4
+
+config MCORE_ECMP_PRIO_ADDRESS
+	int "Priority for addresses"
+	depends on MCORE_IP
+	default 128
+
+config MCORE_ECMP_PRIO_PREFERRED
+	int "Priority for preferred interfaces"
+	depends on MCORE_IP
+	default 32
+
+config MCORE_ECMP_PRIO_NEIGH
+	int "Priority for neighbors"
+	depends on MCORE_IP
+	default 8
+
+config MCORE_ECMP_PRIO_CONNECTED
+	int "Priority for addresses"
+	depends on MCORE_IP
+	default 2
+
+config MCORE_ECMP_PRIO_BASE
+	int "Priority for basic routes"
+	depends on MCORE_IP
+	default 1
+
+config MCORE_ECMP_PRIO_LOCAL
+	int "Priority for local/unreachable routes"
+	depends on MCORE_IP
+	default 0
+
+config MCORE_ECMP_PRIO_BH
+	int "Priority for black-hole routes"
+	depends on MCORE_IP
+	default 0
+
+config MCORE_IPV4_8_TABLE_ENTRIES
+	int "IPv4 /8 entries"
+	depends on MCORE_IP
+	default 10000
+
+config MCORE_IPV4_NBRTENTRIES
+	int "IPv4 max routes entries"
+	depends on MCORE_IP
+	default 50000
+
+config MCORE_IPV4_NBNHENTRIES
+	int "IPv4 max neighbors entries"
+	depends on MCORE_IP
+	default 5000
+
+config MCORE_NEIGH_HASH_ORDER
+	int "Fast Path hash order for neighbours"
+	depends on MCORE_IP
+	default 13
+	help
+	  Order of nexthop hash table (the number of bucket in the table is 2 ^ order).
+	  It has to be coherent with MCORE_IPV4_NBNHENTRIES.
+
+config MCORE_ARP_REPLY
+	bool "Support for responding to ARP requests"
+	depends on MCORE_IP
+	default y
+	help
+	  Enable support of ARP responder in fast path. Even if the option is
+	  enabled, the ARP responder is disabled by default. To activate it,
+	  type "arp-reply on" in fpdebug.
+
+source "fp-modules/reass/Mconfig"
+
+config MCORE_RPF_IPV4
+	bool "IPv4 Reverse Path Forwarding check"
+	depends on MCORE_IP
+	default y
+
+config MCORE_NEXTHOP_MARKING
+	bool "Next hop marking"
+	depends on MCORE_M_TAG && MCORE_NETFILTER
+	depends on MCORE_IP
+	default y
+
+endmenu

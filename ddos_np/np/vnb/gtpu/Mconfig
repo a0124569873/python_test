@@ -1,0 +1,10 @@
+# Copyright 2014 6WIND S.A.
+
+config VNB_NODE_GTPU
+	bool "Enable GTPU VNB node"
+	default y
+
+config VNB_GTPU_MAX_HASH_ORDER
+	int "GTPU max hash table order"
+	depends on VNB_NODE_GTPU
+	default 11
