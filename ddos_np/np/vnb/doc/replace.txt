@@ -1,6 +1,0 @@
-
-.. |gtpu-long| replace:: *GPRS Tunneling Protocol User plane*
-.. |l2tp-long| replace:: *Layer 2 Tunneling Protocol*
-.. |ppp-long| replace:: *Point to Point Protocol*
-.. |pppoe-long| replace:: *Point to Point Protocol over Ethernet*
-.. |gtpuctl| replace:: GTPUctl

@@ -1,8 +1,0 @@
-#verbose
-#foreground
-force
-mode cp
-cp_port 2000
-peer_id $BLADEID
-
-interface ether*

@@ -1,7 +1,0 @@
-.. |ah-esp| replace:: Select the :abbr:`AH (Authentication Headers)` or the
-                      :abbr:`ESP (Encapsulating Security Payload)` protocol.
-.. |proto-sp| replace:: Protocol handled by the SP, choose between "any" or the
-                        protocol id as declared in IPv4 header (example: UDP=17,
-                        TCP=6, ICMP=1).
-.. |vr-desc| replace:: Id of the :abbr:`VRF (Virtual Routing and Forwarding)`
-                       where the SA is created.

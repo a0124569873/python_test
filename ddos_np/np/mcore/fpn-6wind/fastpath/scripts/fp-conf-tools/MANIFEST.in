@@ -1,6 +1,0 @@
-include README
-include MANIFEST.in
-graft fp-conf-tool
-graft fp_conf_tools
-global-exclude *.pyc
-global-exclude *.pyo

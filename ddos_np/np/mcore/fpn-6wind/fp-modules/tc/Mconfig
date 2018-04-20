@@ -1,8 +1,0 @@
-# Copyright 2014 6WIND S.A.
-
-config MCORE_TC
-	bool "Enable Traffic Conditioning"
-	default y
-	help
-	  Enable Traffic conditioning support.
-

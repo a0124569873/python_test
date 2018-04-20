@@ -1,8 +1,0 @@
-# Copyright 2014 6WIND S.A.
-
-config MCORE_SW_SCHED
-	bool "Enable software packet scheduling"
-	default y
-	help
-	  Add software packet scheduling, for egress qos. DPDK only.
-
